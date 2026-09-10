@@ -1,0 +1,79 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/*
+ * ClimaScope design system (Tailwind 4 theme tokens).
+ * brand   = teal scale (primary actions, links, focus)
+ * ink     = slate scale for text/surfaces (Tailwind default palette still available)
+ * risk-1..5 = shared risk-score colors (map overlay, charts, badges — slice 3+)
+ */
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --color-brand-50: #f0fdfa;
+  --color-brand-100: #ccfbf1;
+  --color-brand-200: #99f6e4;
+  --color-brand-300: #5eead4;
+  --color-brand-400: #2dd4bf;
+  --color-brand-500: #14b8a6;
+  --color-brand-600: #0d9488;
+  --color-brand-700: #0f766e;
+  --color-brand-800: #115e59;
+  --color-brand-900: #134e4a;
+  --color-brand-950: #042f2e;
+
+  --color-risk-1: #22c55e;
+  --color-risk-2: #84cc16;
+  --color-risk-3: #eab308;
+  --color-risk-4: #f97316;
+  --color-risk-5: #ef4444;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-slate-50 font-sans text-slate-900 antialiased;
+  }
+  ::selection {
+    @apply bg-brand-200 text-brand-950;
+  }
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold
+    transition-colors focus-visible:outline-2 focus-visible:outline-offset-2
+    focus-visible:outline-brand-700 disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900
+      shadow-xs placeholder:text-slate-400
+      focus:border-brand-600 focus:ring-2 focus:ring-brand-600/20 focus:outline-none
+      disabled:cursor-not-allowed disabled:bg-slate-100;
+  }
+  .label {
+    @apply mb-1 block text-sm font-medium text-slate-700;
+  }
+  .btn-primary {
+    @apply btn bg-brand-700 text-white hover:bg-brand-800 active:bg-brand-900;
+  }
+  .btn-secondary {
+    @apply btn border border-slate-300 bg-white text-slate-800 hover:bg-slate-100;
+  }
+  .btn-ghost {
+    @apply btn text-slate-600 hover:bg-slate-200/70 hover:text-slate-900;
+  }
+  .btn-danger {
+    @apply btn border border-red-200 bg-white text-red-700 hover:bg-red-50;
+  }
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+}

@@ -38,6 +38,12 @@ import {
   requireAreaAccess,
 } from "~/lib/rbac";
 import {
+  DEFAULT_INGEST_BUDGET_MS,
+  MAX_STRUCTURES_PER_AREA,
+  ingestStructuresForArea,
+  type IngestResult,
+} from "~/lib/overpass";
+import {
   ValidationError,
   asRecord,
   optString,
@@ -55,6 +61,9 @@ type Ctx = {
   body: unknown;
 };
 type Handler = (ctx: Ctx) => Response | Promise<Response>;
+
+/** Inline budget for footprint ingestion during area creation (ms). */
+const INGEST_INLINE_BUDGET_MS = DEFAULT_INGEST_BUDGET_MS;
 
 function json(data: unknown, status = 200, headers?: HeadersInit): Response {
   return new Response(JSON.stringify(data), {
@@ -120,7 +129,7 @@ function parseId(raw: string): number {
   return n;
 }
 
-function publicArea(a: AreaRow, latest: AnalysisRow | null) {
+function publicArea(a: AreaRow, latest: AnalysisRow | null, structuresCount?: number) {
   return {
     id: a.id,
     name: a.name,
@@ -132,10 +141,20 @@ function publicArea(a: AreaRow, latest: AnalysisRow | null) {
     climate_type: a.climate_type,
     is_demo: a.is_demo === 1,
     created_at: a.created_at,
+    fetch_status: a.fetch_status,
+    fetch_note: a.fetch_note,
+    fetched_at: a.fetched_at,
+    structures_count: structuresCount ?? countStructures(a.id),
     latest_analysis: latest
       ? { id: latest.id, status: latest.status, created_at: latest.created_at }
       : null,
   };
+}
+
+function countStructures(areaId: number): number {
+  return db
+    .query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM structures WHERE area_id = ?")
+    .get(areaId)!.n;
 }
 
 function latestAnalysisByArea(areaIds: number[]): Map<number, AnalysisRow> {
@@ -247,11 +266,36 @@ function dbInsertArea(input: Record<string, unknown>, user: SafeUser): AreaRow {
   return db.query<AreaRow, [number]>("SELECT * FROM areas WHERE id = ?").get(id)!;
 }
 
-const createArea = route("POST", "/api/areas", ({ user, body }) => {
+const createArea = route("POST", "/api/areas", async ({ user, body }) => {
   const u = requireUser(user);
   requireRole(u, ["admin", "analyst"]);
   const area = dbInsertArea(asRecord(body), u);
-  return json({ area: publicArea(area, null) }, 201);
+  // Ingest footprints inline, but under a hard deadline: Overpass is
+  // best-effort and must never leave the create flow hanging. On failure the
+  // area still exists and the UI offers an explicit retry.
+  const ingest = await ingestStructuresForArea(area, { budgetMs: INGEST_INLINE_BUDGET_MS });
+  return json({ area: publicArea(freshArea(area.id), null), structures: ingest }, 201);
+});
+
+function freshArea(id: number): AreaRow {
+  return db.query<AreaRow, [number]>("SELECT * FROM areas WHERE id = ?").get(id)!;
+}
+
+/** Explicit re-fetch action on the area detail page. */
+const fetchStructures = route("POST", "/api/areas/:id/structures/fetch", async ({ user, params }) => {
+  const u = requireUser(user);
+  const area = requireAreaAccess(u, parseId(params.id));
+  if (!canEditArea(u, area)) {
+    throw new HttpError(403, "Only the area owner or an admin can fetch footprints.");
+  }
+  const ingest: IngestResult = await ingestStructuresForArea(area);
+  const updated = freshArea(area.id);
+  return json({
+    area: publicArea(updated, null),
+    structures: ingest,
+    // Where the deterministic per-area cap sits, so the UI can surface it.
+    structures_cap: MAX_STRUCTURES_PER_AREA,
+  });
 });
 
 const getArea = route("GET", "/api/areas/:id", ({ user, params }) => {
@@ -426,9 +470,17 @@ const createAnalysis = route("POST", "/api/areas/:id/analyses", ({ user, params,
 
 // -- structures ---------------------------------------------------------------
 
-const listStructures = route("GET", "/api/areas/:id/structures", ({ user, params }) => {
+const listStructures = route("GET", "/api/areas/:id/structures", ({ user, params, req }) => {
   const u = requireUser(user);
   const area = requireAreaAccess(u, parseId(params.id));
+  // Optional ?limit= (1–5000, default 5000) lets the map overlay pull a modest
+  // sample without weakening the endpoint's ceiling.
+  let limit = 5000;
+  const rawLimit = new URL(req.url).searchParams.get("limit");
+  if (rawLimit !== null) {
+    const n = Number(rawLimit);
+    if (Number.isInteger(n) && n >= 1 && n <= 5000) limit = n;
+  }
   const rows = db
     .query<
       {
@@ -439,9 +491,9 @@ const listStructures = route("GET", "/api/areas/:id/structures", ({ user, params
         footprint: string | null;
         props: string | null;
       },
-      [number]
-    >("SELECT * FROM structures WHERE area_id = ? LIMIT 5000")
-    .all(area.id);
+      [number, number]
+    >("SELECT * FROM structures WHERE area_id = ? LIMIT ?")
+    .all(area.id, limit);
   return json({
     structures: rows.map((s) => ({
       id: s.id,
@@ -476,6 +528,7 @@ const ROUTES: Route[] = [
   me,
   listAreas,
   createArea,
+  fetchStructures,
   getArea,
   patchArea,
   deleteArea,

@@ -31,8 +31,10 @@ export default defineConfig({
   },
   // bun:sqlite is a Bun built-in, not an npm package — keep the SSR bundle from
   // trying to resolve it so the DB layer works in the Bun production server.
+  // leaflet touches window/document on evaluation; it is only ever dynamically
+  // imported inside client effects, so keep it out of the SSR bundle entirely.
   ssr: {
-    external: ["bun:sqlite"],
+    external: ["bun:sqlite", "leaflet"],
   },
   plugins: [
     tailwindcss(),

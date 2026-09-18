@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { Nav } from "~/components/Nav";
@@ -11,7 +11,7 @@ import {
   Spinner,
   StatusBadge,
 } from "~/components/ui";
-import { CLIMATE_TYPES } from "~/lib/climates";
+import { fmtCoord, fmtDate } from "~/lib/format";
 import { getDashboardDataFn, type DashboardData, type DashboardArea } from "~/lib/server/queries";
 
 type AdminData = NonNullable<DashboardData["admin"]>;
@@ -24,18 +24,6 @@ export const Route = createFileRoute("/dashboard")({
   },
   component: Dashboard,
 });
-
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
-}
-
-function fmtCoord(lat: number, lng: number): string {
-  return `${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? "N" : "S"}, ${Math.abs(lng).toFixed(4)}° ${
-    lng >= 0 ? "E" : "W"
-  }`;
-}
 
 function Dashboard() {
   const data = Route.useLoaderData();
@@ -54,7 +42,9 @@ function Dashboard() {
             </p>
           </div>
           {(user.role === "admin" || user.role === "analyst") && (
-            <p className="text-xs text-slate-400">Map picker and scoring engine land in slices 2–3.</p>
+            <p className="text-xs text-slate-400">
+              Scoring engine lands in slice 3 — maps and footprints are live now.
+            </p>
           )}
         </div>
 
@@ -75,13 +65,18 @@ function Dashboard() {
 
         {(user.role === "admin" || user.role === "analyst") && (
           <section className="mt-12">
-            <h2 className="text-lg font-bold tracking-tight text-slate-900">Create an area</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              You are granted access automatically. The interactive map picker arrives in slice 2 —
-              for now, enter coordinates directly.
-            </p>
-            <div className="mt-4">
-              <CreateAreaForm climateDefault="tropical" />
+            <div className="card flex flex-col items-start justify-between gap-4 p-6 sm:flex-row sm:items-center">
+              <div>
+                <h2 className="text-lg font-bold tracking-tight text-slate-900">Create an area</h2>
+                <p className="mt-1 max-w-xl text-sm text-slate-500">
+                  Click the map to drop the centre, set a radius of 0.5–10 km, and pick a climate
+                  type. Building footprints are fetched live from OpenStreetMap; you are granted
+                  access to the area automatically.
+                </p>
+              </div>
+              <Link to="/areas/new" className="btn-primary shrink-0">
+                Open the map picker
+              </Link>
             </div>
           </section>
         )}
@@ -94,7 +89,11 @@ function Dashboard() {
 
 function AreaCard({ area }: { area: DashboardArea }) {
   return (
-    <article className="card flex flex-col p-5">
+    <Link
+      to="/areas/$areaId"
+      params={{ areaId: String(area.id) }}
+      className="card flex flex-col p-5 transition-shadow hover:border-brand-300 hover:shadow-md"
+    >
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-semibold text-slate-900">{area.name}</h3>
         {area.is_demo && <DemoBadge />}
@@ -107,6 +106,11 @@ function AreaCard({ area }: { area: DashboardArea }) {
         <span className="chip bg-slate-100 text-slate-700 ring-1 ring-slate-200 ring-inset">
           r = {area.radius_km} km
         </span>
+        {area.structures_count > 0 && (
+          <span className="chip bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 ring-inset">
+            {area.structures_count.toLocaleString()} footprints
+          </span>
+        )}
       </div>
       <dl className="mt-4 space-y-1.5 text-sm">
         <div className="flex justify-between gap-2">
@@ -127,136 +131,17 @@ function AreaCard({ area }: { area: DashboardArea }) {
           </dd>
         </div>
       </dl>
-      <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
-        Map overlay &amp; scoring arrive in slices 2–3.
+      <p className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-400">
+        <span>
+          {area.structures_count > 0
+            ? "Map & footprints ready"
+            : area.fetch_status === "failed"
+              ? "Footprint fetch failed — retry on the area page"
+              : "Footprints not fetched yet"}
+        </span>
+        <span className="font-medium text-brand-700">View area →</span>
       </p>
-    </article>
-  );
-}
-
-function CreateAreaForm({ climateDefault }: { climateDefault: string }) {
-  const router = useRouter();
-  const [form, setForm] = useState({
-    name: "",
-    city: "",
-    country: "",
-    center_lat: "25.7743",
-    center_lng: "-80.1937",
-    radius_km: "3",
-    climate_type: climateDefault,
-  });
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  function set(field: keyof typeof form) {
-    return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      setForm((f) => ({ ...f, [field]: e.target.value }));
-  }
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const res = await fetch("/api/areas", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: form.name,
-          city: form.city,
-          country: form.country,
-          center_lat: Number(form.center_lat),
-          center_lng: Number(form.center_lng),
-          radius_km: Number(form.radius_km),
-          climate_type: form.climate_type,
-        }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { error?: string; area?: { name: string } };
-      if (!res.ok) {
-        setError(data.error ?? "Could not create the area.");
-        return;
-      }
-      setSuccess(`“${data.area?.name}” created.`);
-      setForm((f) => ({ ...f, name: "", city: "", country: "" }));
-      await router.invalidate();
-    } catch {
-      setError("Network error — please try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="card p-6">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="sm:col-span-2">
-          <label htmlFor="area-name" className="label">
-            Area name
-          </label>
-          <input id="area-name" required className="input" placeholder="Brickell portfolio" value={form.name} onChange={set("name")} />
-        </div>
-        <div>
-          <label htmlFor="area-city" className="label">
-            City
-          </label>
-          <input id="area-city" className="input" placeholder="Miami" value={form.city} onChange={set("city")} />
-        </div>
-        <div>
-          <label htmlFor="area-country" className="label">
-            Country
-          </label>
-          <input id="area-country" className="input" placeholder="US" value={form.country} onChange={set("country")} />
-        </div>
-        <div>
-          <label htmlFor="area-lat" className="label">
-            Center latitude
-          </label>
-          <input id="area-lat" required type="number" step="0.0001" min={-90} max={90} className="input" value={form.center_lat} onChange={set("center_lat")} />
-        </div>
-        <div>
-          <label htmlFor="area-lng" className="label">
-            Center longitude
-          </label>
-          <input id="area-lng" required type="number" step="0.0001" min={-180} max={180} className="input" value={form.center_lng} onChange={set("center_lng")} />
-        </div>
-        <div>
-          <label htmlFor="area-radius" className="label">
-            Radius (km)
-          </label>
-          <input id="area-radius" required type="number" step="0.5" min={0.5} max={10} className="input" value={form.radius_km} onChange={set("radius_km")} />
-        </div>
-        <div>
-          <label htmlFor="area-climate" className="label">
-            Climate type
-          </label>
-          <select id="area-climate" className="input" value={form.climate_type} onChange={set("climate_type")}>
-            {CLIMATE_TYPES.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-      {error && (
-        <div className="mt-4">
-          <Alert kind="error">{error}</Alert>
-        </div>
-      )}
-      {success && (
-        <div className="mt-4">
-          <Alert kind="success">{success}</Alert>
-        </div>
-      )}
-      <div className="mt-4">
-        <button type="submit" disabled={busy} className="btn-primary">
-          {busy && <Spinner />}
-          Create area
-        </button>
-      </div>
-    </form>
+    </Link>
   );
 }
 

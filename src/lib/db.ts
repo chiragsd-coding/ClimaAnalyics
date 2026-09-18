@@ -109,6 +109,20 @@ function migrate(db: Database) {
     `);
     db.exec(`PRAGMA user_version = 1;`);
   }
+
+  // v2 — slice 2: track building-footprint ingestion state per area, and make
+  // re-fetches idempotent per (area, osm_id).
+  if (version < 2) {
+    db.exec(`
+      ALTER TABLE areas ADD COLUMN fetch_status TEXT NOT NULL DEFAULT 'none'
+        CHECK (fetch_status IN ('none','ok','failed'));
+      ALTER TABLE areas ADD COLUMN fetch_note TEXT NOT NULL DEFAULT '';
+      ALTER TABLE areas ADD COLUMN fetched_at TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_structures_area_osm
+        ON structures(area_id, osm_id) WHERE osm_id IS NOT NULL;
+    `);
+    db.exec(`PRAGMA user_version = 2;`);
+  }
 }
 
 export type UserRow = {
@@ -132,6 +146,9 @@ export type AreaRow = {
   is_demo: 0 | 1;
   created_by: number | null;
   created_at: string;
+  fetch_status: "none" | "ok" | "failed";
+  fetch_note: string;
+  fetched_at: string | null;
 };
 
 export type AnalysisRow = {

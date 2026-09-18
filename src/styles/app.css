@@ -1,5 +1,22 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
+/* Leaflet's stylesheet for the map picker / area map (slice 2). */
+@import "leaflet/dist/leaflet.css";
+
+/* Leaflet ↔ Tailwind preflight fixes. Tailwind resets img { max-width: 100% },
+   which distorts raster tiles; and map panes/controls use z-index up to 1000,
+   which would overlay the sticky nav without a stacking context (map wrappers
+   therefore get `relative z-0`). These rules are unlayered on purpose so they
+   beat Tailwind's layered base styles. */
+.leaflet-container {
+  font: inherit;
+}
+.leaflet-container img,
+.leaflet-container svg,
+.leaflet-container canvas {
+  max-width: none !important;
+  max-height: none !important;
+}
 
 /*
  * ClimaScope design system (Tailwind 4 theme tokens).

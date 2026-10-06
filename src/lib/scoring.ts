@@ -821,7 +821,7 @@ export async function runAnalysisForArea(
         r.structureId,
         JSON.stringify(r.hazards),
         r.score,
-        riskLabel(r.score),
+        ["very_low","low","medium","high","very_high"][r.score-1],
         r.blend,
         FORMULA_VERSION,
         r.dominant,

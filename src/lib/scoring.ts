@@ -271,9 +271,9 @@ export function buildWindGrid(
 ): (lat: number, lon: number) => WindCell | null {
   const STEP = 0.005;
   const cells = new Map<string, WindCell>();
-  const latMin = lat0 - halfSpanDeg,
-    latMax = lat0 + halfSpanDeg;
-  const lonMin = lon0 - halfSpanDeg,
+  const latMin = Math.floor((lat0 - halfSpanDeg) / STEP) * STEP;
+  const lonMin = Math.floor((lon0 - halfSpanDeg) / STEP) * STEP;
+  const latMax = lat0 + halfSpanDeg,
     lonMax = lon0 + halfSpanDeg;
   for (let lat = latMin; lat <= latMax; lat += STEP) {
     for (let lon = lonMin; lon <= lonMax; lon += STEP) {

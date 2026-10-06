@@ -806,6 +806,7 @@ export async function runAnalysisForArea(
     ins.run(area.id, climate, params, createdBy, now).lastInsertRowid
   );
 
+  let summaryOut: AnalysisSummary | null = null;
   const insScore = db.prepare(
     `INSERT INTO structure_scores
        (analysis_id, structure_id, hazard_scores, overall_score, risk_category,
@@ -877,12 +878,13 @@ export async function runAnalysisForArea(
         analysisId,
       ]
     );
+    summaryOut = summary;
     db.run("COMMIT");
   } catch (err) {
     db.run("ROLLBACK");
     throw err;
   }
-  return { analysisId, summary, errors };
+  return { analysisId, summary: summaryOut!, errors };
 }
 
 export type StructureScoreRow = {

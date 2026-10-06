@@ -123,6 +123,33 @@ function migrate(db: Database) {
     `);
     db.exec(`PRAGMA user_version = 2;`);
   }
+  // v3 — slice 3: scoring engine. IBTrACS track cache + per-structure score
+  // provenance (blend, formula version, dominant hazard, sources JSON,
+  // missing dimensions, raw hazard values) and analysis `sources` column.
+  // Idempotent: ALTERs add columns if this migration runs on existing seed DB.
+  if (version < 3) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ibtracs_tracks (
+        sid       TEXT NOT NULL,
+        season    INTEGER NOT NULL,
+        iso_time  TEXT NOT NULL,
+        lat       REAL NOT NULL,
+        lon       REAL NOT NULL,
+        nature    TEXT,
+        wind_kts  INTEGER,
+        sshs      INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_ibtracs_tracks_bb ON ibtracs_tracks(lat, lon);
+      ALTER TABLE analyses ADD COLUMN sources TEXT;
+      ALTER TABLE structure_scores ADD COLUMN blend REAL;
+      ALTER TABLE structure_scores ADD COLUMN formula_version TEXT NOT NULL DEFAULT 'maxmean-v1';
+      ALTER TABLE structure_scores ADD COLUMN dominant_hazard TEXT;
+      ALTER TABLE structure_scores ADD COLUMN sources TEXT;
+      ALTER TABLE structure_scores ADD COLUMN missing_hazards TEXT;
+      ALTER TABLE structure_scores ADD COLUMN raw_values TEXT;
+    `);
+    db.exec(`PRAGMA user_version = 3;`);
+  }
 }
 
 export type UserRow = {

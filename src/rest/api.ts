@@ -38,6 +38,11 @@ import {
   requireAreaAccess,
 } from "~/lib/rbac";
 import {
+  runAnalysisForArea,
+  fetchStructureScores,
+  type AnalysisSummary,
+} from "~/lib/scoring";
+import {
   DEFAULT_INGEST_BUDGET_MS,
   MAX_STRUCTURES_PER_AREA,
   ingestStructuresForArea,
@@ -437,39 +442,70 @@ const listAnalyses = route("GET", "/api/areas/:id/analyses", ({ user, params }) 
   });
 });
 
-const createAnalysis = route("POST", "/api/areas/:id/analyses", ({ user, params, body }) => {
+const createAnalysis = route("POST", "/api/areas/:id/analyses", async ({ user, params }) => {
   const u = requireUser(user);
   const area = requireAreaAccess(u, parseId(params.id));
   if (!canRunAnalyses(u)) throw new HttpError(403, "Viewers cannot run analyses.");
-
-  const noteField = (body as Record<string, unknown> | undefined)?.note;
-  const note = typeof noteField === "string" ? noteField.slice(0, 500) : undefined;
-  const paramsJson = JSON.stringify({ requested_by: u.id, note });
-
+  db.run(
+    "DELETE FROM analyses WHERE area_id = ? AND status IN ('pending','running')",
+    [area.id]
+  );
+  const paramsJson = JSON.stringify({ model_version: "maxmean-v1", requested_by: u.id });
   const res = db.run(
-    `INSERT INTO analyses (area_id, climate_type, status, params, created_by) VALUES (?, ?, 'pending', ?, ?)`,
-    [area.id, area.climate_type, paramsJson, u.id]
+    "INSERT INTO analyses (area_id, climate_type, status, params, created_by, created_at) VALUES (?, ?, 'running', ?, ?, ?)",
+    [area.id, area.climate_type, paramsJson, u.id, new Date().toISOString()]
   );
-  const created = db
-    .query<AnalysisRow, [number]>("SELECT * FROM analyses WHERE id = ?")
-    .get(Number(res.lastInsertRowid))!;
-  return json(
-    {
-      analysis: {
-        id: created.id,
-        area_id: created.area_id,
-        climate_type: created.climate_type,
-        status: created.status,
-        created_at: created.created_at,
-      },
-      note: "Scoring engine lands in slice 3 — the analysis stays 'pending' until then.",
-    },
-    201
-  );
+  const analysisId = Number(res.lastInsertRowid);
+  try {
+    const { summary } = await runAnalysisForArea(area, u.id);
+    return json({
+      analysis: { id: analysisId, status: "complete", summary },
+      note: "Model v1 — heuristic estimates from public layers; see summary.statuses/sources for provenance.",
+    });
+  } catch (err) {
+    db.run("UPDATE analyses SET status = 'failed', completed_at = ? WHERE id = ?", [
+      new Date().toISOString(),
+      analysisId,
+    ]);
+    console.error("[api] scoring run failed", err);
+    throw new HttpError(500, "Scoring run failed — see server log.");
+  }
 });
-
-// -- structures ---------------------------------------------------------------
-
+const getAnalysis = route("GET", "/api/areas/:id/analyses/:aid", ({ user, params }) => {
+  const u = requireUser(user);
+  const area = requireAreaAccess(u, parseId(params.id));
+  const row = db
+    .query<AnalysisRow, [number, number]>("SELECT * FROM analyses WHERE id = ? AND area_id = ?")
+    .get(parseId(params.aid), area.id);
+  if (!row) throw new HttpError(404, "Analysis not found.");
+  return json({
+    analysis: {
+      id: row.id, area_id: row.area_id, climate_type: row.climate_type, status: row.status,
+      summary: parseJsonSafe<Record<string, unknown>>(row.summary),
+      sources: parseJsonSafe<Record<string, unknown>>(row.sources),
+      created_at: row.created_at, completed_at: row.completed_at,
+    },
+  });
+});
+const getAnalysisScores = route("GET", "/api/areas/:id/analyses/:aid/scores", ({ user, params }) => {
+  const u = requireUser(user);
+  const area = requireAreaAccess(u, parseId(params.id));
+  const row = db
+    .query<AnalysisRow, [number, number]>("SELECT * FROM analyses WHERE id = ? AND area_id = ?")
+    .get(parseId(params.aid), area.id);
+  if (!row) throw new HttpError(404, "Analysis not found.");
+  const scores = fetchStructureScores(row.id, area.id);
+  return json({
+    analysis_id: row.id, model_version: "maxmean-v1", count: scores.length,
+    disclaimer:
+      "ClimaScope risk scores are model estimates of hazard exposure at each structure's location, derived from public datasets at the stated resolutions. They are not engineering assessments of any individual building.",
+    structures: scores.map((x) => ({
+      structure_id: x.structure_id, lat: x.centroid_lat, lng: x.centroid_lon,
+      overall_score: x.overall_score, risk_category: x.risk_category, blend: x.blend,
+      dominant_hazard: x.dominant_hazard, hazard_scores: x.hazard_scores,
+    })),
+  });
+});
 const listStructures = route("GET", "/api/areas/:id/structures", ({ user, params, req }) => {
   const u = requireUser(user);
   const area = requireAreaAccess(u, parseId(params.id));
@@ -537,6 +573,8 @@ const ROUTES: Route[] = [
   revokeAccess,
   listAnalyses,
   createAnalysis,
+  getAnalysis,
+  getAnalysisScores,
   listStructures,
   listUsers,
 ];

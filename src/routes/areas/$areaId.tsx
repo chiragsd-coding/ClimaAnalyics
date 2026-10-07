@@ -7,8 +7,9 @@
  */
 import { createFileRoute, Link, notFound, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AreaMap } from "~/components/AreaMap";
+import { AreaMap, type RiskPoint } from "~/components/AreaMap";
 import { Nav } from "~/components/Nav";
+import { ResultsPanel } from "~/components/ResultsPanel";
 import { Alert, ClimateChip, DemoBadge, Spinner } from "~/components/ui";
 import { climateByValue, HAZARD_LABELS } from "~/lib/climates";
 import { fmtCoord, fmtDate, fmtDateTime } from "~/lib/format";
@@ -300,21 +301,14 @@ function AreaDetailPage() {
                 estimates) once the scoring engine ships.
               </p>
             </section>
-
-            {area.latest_analysis && (
-              <section className="card p-5">
-                <h2 className="text-sm font-semibold text-slate-900">Latest analysis</h2>
-                <p className="mt-2 text-sm text-slate-600">
-                  #{area.latest_analysis.id} · {area.latest_analysis.status} ·{" "}
-                  {fmtDate(area.latest_analysis.created_at)}
-                </p>
-                <p className="mt-1 text-xs text-slate-400">
-                  Scoring engine lands in slice 3 — analyses stay pending until then.
-                </p>
-              </section>
-            )}
           </aside>
         </div>
+        {/* Slice 4 — risk results: KPIs, risk map, distribution, sortable table,
+            status/provenance, saved analyses (auto-loads the latest). */}
+        <div className="mt-6">
+          <ResultsPanel area={area} canRun={boot.user.role !== "viewer"} />
+        </div>
+
       </div>
     </main>
   );

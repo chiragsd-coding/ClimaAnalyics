@@ -506,6 +506,29 @@ const getAnalysisScores = route("GET", "/api/areas/:id/analyses/:aid/scores", ({
     })),
   });
 });
+const getAnalysisSources = route("GET", "/api/areas/:id/analyses/:aid/sources", ({ user, params }) => {
+  const u = requireUser(user);
+  const area = requireAreaAccess(u, parseId(params.id));
+  const row = db
+    .query<AnalysisRow, [number, number]>("SELECT * FROM analyses WHERE id = ? AND area_id = ?")
+    .get(parseId(params.aid), area.id);
+  if (!row) throw new HttpError(404, "Analysis not found.");
+  // Per-structure source metadata (dataset, resolution, attribution) is
+  // uniform per hazard dimension — dedupe across a sample of score rows.
+  const merged: Record<string, unknown> = {};
+  const rows = db
+    .query<{ sources: string | null }, [number]>(
+      "SELECT sources FROM structure_scores WHERE analysis_id = ? LIMIT 25"
+    )
+    .all(parseId(params.aid));
+  for (const r of rows) {
+    const s = parseJsonSafe<{ hazards?: Record<string, unknown> }>(r.sources);
+    for (const [hid, meta] of Object.entries(s?.hazards ?? {})) {
+      if (!(hid in merged)) merged[hid] = meta;
+    }
+  }
+  return json({ analysis_id: row.id, hazards: merged });
+});
 const listStructures = route("GET", "/api/areas/:id/structures", ({ user, params, req }) => {
   const u = requireUser(user);
   const area = requireAreaAccess(u, parseId(params.id));
@@ -575,6 +598,7 @@ const ROUTES: Route[] = [
   createAnalysis,
   getAnalysis,
   getAnalysisScores,
+  getAnalysisSources,
   listStructures,
   listUsers,
 ];

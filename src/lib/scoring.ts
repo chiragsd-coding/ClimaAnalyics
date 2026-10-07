@@ -747,6 +747,7 @@ export async function runAnalysisForArea(
     raw: Record<string, number | null>;
   }> = [];
   let blendSum = 0;
+  let scoreSum = 0;
   let scoredCount = 0;
   const distribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   const statuses: Record<string, { scored: number; not_assessed: number; low_confidence: number }> = {};
@@ -780,6 +781,7 @@ export async function runAnalysisForArea(
     if (combined.status === "scored") {
       scoredCount++;
       blendSum += combined.blend;
+      scoreSum += combined.R;
       distribution[combined.R] = (distribution[combined.R] ?? 0) + 1;
     }
     inserted.push({
@@ -848,7 +850,8 @@ export async function runAnalysisForArea(
       model_version: FORMULA_VERSION,
       climate_type: climate,
       scored: scoredCount,
-      area_average: scoredCount > 0 ? Math.round((100 * blendSum) / scoredCount) / 100 : 0,
+      // COMBINATION_RULE.md §4: area_average = mean of R_i over scored structures (2dp).
+      area_average: scoredCount > 0 ? Math.round((100 * scoreSum) / scoredCount) / 100 : 0,
       pct_high_vhigh: Math.round(pct * 10) / 10,
       dominant_hazard_area: modal,
       distribution: distr,

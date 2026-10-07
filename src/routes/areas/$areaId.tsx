@@ -7,7 +7,7 @@
  */
 import { createFileRoute, Link, notFound, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AreaMap, type RiskPoint } from "~/components/AreaMap";
+import { AreaMap } from "~/components/AreaMap";
 import { Nav } from "~/components/Nav";
 import { ResultsPanel } from "~/components/ResultsPanel";
 import { Alert, ClimateChip, DemoBadge, Spinner } from "~/components/ui";

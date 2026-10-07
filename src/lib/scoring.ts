@@ -234,8 +234,8 @@ export function ensureIbtracsTracks(): { ok: boolean; count: number; note?: stri
       if (!sid || Number.isNaN(lat) || Number.isNaN(lon)) continue;
       if (season < 1980 || season > 2023) continue;
       if (!KEEP_NATURE.has(nature)) continue;
-      let sshs = parseInt(f[24], 10);
-      const wind = parseInt(f[22], 10); // USA_WIND kts
+      let sshs = parseInt(f[25], 10); // USA_SSHS (v04r01 list layout; -5/-999 = missing)
+      const wind = parseInt(f[23], 10); // USA_WIND kts
       if (Number.isNaN(sshs) || sshs <= 0) {
         // Derive category from 1-min sustained wind (kt → m/s): Cat1≥64kt, 2≥83, 3≥96, 4≥113, 5≥137
         sshs = wind >= 137 ? 5 : wind >= 113 ? 4 : wind >= 96 ? 3 : wind >= 83 ? 2 : wind >= 64 ? 1 : 0;
@@ -707,20 +707,20 @@ export async function runAnalysisForArea(
         .all(
           area.center_lat - 4,
           area.center_lat + 4,
-          area.center_lon - 4,
-          area.center_lon + 4
+          area.center_lng - 4,
+          area.center_lng + 4
         )
     : [];
   const halfSpan = 0.06 + (area.radius_km / 111);
   const windGrid =
     trackRows.length > 0
-      ? buildWindGrid(area.center_lat, area.center_lon, halfSpan, trackRows)
+      ? buildWindGrid(area.center_lat, area.center_lng, halfSpan, trackRows)
       : null;
 
   let osm = loadOsmBaseline(area.id);
   if (!osm) {
     try {
-      osm = await fetchOsmBaseline(area.center_lat, area.center_lon, 0.08 + (area.radius_km / 111));
+      osm = await fetchOsmBaseline(area.center_lat, area.center_lng, 0.08 + (area.radius_km / 111));
       saveOsmBaseline(area.id, osm);
     } catch (err) {
       errors.push(`OSM baseline fetch failed: ${(err as Error).message}`);
@@ -849,7 +849,7 @@ export async function runAnalysisForArea(
       climate_type: climate,
       scored: scoredCount,
       area_average: scoredCount > 0 ? Math.round((100 * blendSum) / scoredCount) / 100 : 0,
-      pct_high_vhigh: Math.round(100 * pct) / 10,
+      pct_high_vhigh: Math.round(pct * 10) / 10,
       dominant_hazard_area: modal,
       distribution: distr,
       blend: {

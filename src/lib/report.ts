@@ -217,6 +217,7 @@ export async function buildReportPdf(input: ReportInput): Promise<{ bytes: Uint8
   ): number {
     const clean = sanitize(s);
     const lines = maxChars ? wrapText(clean, maxChars) : clean.split("\n");
+    push(clean);
     let yy = y;
     for (const ln of lines) {
       page.drawText(ln, { x, y: yy, size, font: f, color });
@@ -341,10 +342,8 @@ export async function buildReportPdf(input: ReportInput): Promise<{ bytes: Uint8
       drawText(page, bold, 8.5, MARGIN + 12, y, k, MUTED);
       if (v) {
         const maxChars = 78;
-        const lines = wrapText(v, maxChars);
         let yy = y;
-        yy = drawText(page, font, 8.5, MARGIN + 118, yy, lines[0] ?? "", INK, maxChars);
-        for (let i = 1; i < lines.length; i++) yy = drawText(page, font, 8.5, MARGIN + 118, yy, lines[i], INK, maxChars);
+        yy = drawText(page, font, 8.5, MARGIN + 118, yy, v, INK, maxChars);
         y = Math.min(y, yy) - 2;
       } else {
         y -= 12;

@@ -2,7 +2,7 @@
 
 Street-level climate risk scores for every rooftop in an area of interest, built for insurers, reinsurers, municipal planning teams, and property-portfolio managers.
 
-Define an area (click the map or enter coordinates + radius, 0.5–10 km), pick a climate type, and ClimaScope scores every OSM structure in that area **1–5 (Very Low → Very High)** for climate risk using real public hazard datasets — shown on a color-coded map with per-structure metrics, an area average, and a downloadable PDF report (roadmap).
+Define an area (click the map or enter coordinates + radius, 0.5–10 km), pick a climate type, and ClimaScope scores every OSM structure in that area **1–5 (Very Low → Very High)** for climate risk using real public hazard datasets — shown on a color-coded map with per-structure metrics, an area average, and a downloadable PDF report (Slice 5, in progress).
 
 ## Status (MVP in progress)
 
@@ -10,9 +10,9 @@ Define an area (click the map or enter coordinates + radius, 0.5–10 km), pick 
 |---|---|---|
 | 1 | Auth + area-scoped RBAC (users see only granted areas + public demo) | ✅ Done |
 | 2 | Map-driven area definition + OSM footprint ingestion | ✅ Done |
-| 3 | Scoring engine v1 — 8 hazard dimensions, spec combination rule (maxmean-v1), persisted analyses, area-scoped REST | ✅ Done (Miami demo band-checked, avg 4.16) |
-| 4 | Results UI — risk-colored map overlay, sortable table, distribution chart, KPI cards, saved results | 🔨 In progress |
-| 5 | PDF area report (risk profile + top-risk structures) | ⏳ Queued |
+| 3 | Scoring engine v1 — 8 hazard dimensions, spec combination rule (maxmean-v1), persisted analyses, area-scoped REST | ✅ Done (Miami demo band-checked, avg 4.00) |
+| 4 | Results UI — risk-colored map overlay, sortable table, distribution chart, KPI cards, saved results, provenance/sources disclosure | ✅ Done (verified in-browser on the live site) |
+| 5 | PDF area report (risk profile + top-risk structures) | 🔨 In progress |
 | 6 | Subscription tiers (Free demo-only / Pro $99-mo / Enterprise custom), paywall, polish | ⏳ Queued |
 
 ## Stack

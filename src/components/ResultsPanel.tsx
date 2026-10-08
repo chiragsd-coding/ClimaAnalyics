@@ -87,6 +87,7 @@ export function ResultsPanel({ area, canRun }: { area: AreaPublic; canRun: boole
   const [sortDir, setSortDir] = useState<-1 | 1>(-1);
   const [page, setPage] = useState(1);
   const [running, setRunning] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [activeId, setActiveId] = useState<number | null>(null);
 
   const climate = climateByValue(area.climate_type);
@@ -123,6 +124,32 @@ export function ResultsPanel({ area, canRun }: { area: AreaPublic; canRun: boole
       .then((r) => (r.ok ? (r.json() as Promise<{ hazards?: HazardSources }>) : null))
       .then((d) => setSources(d?.hazards ?? null))
       .catch(() => setSources(null));
+  }
+
+  async function downloadReport() {
+    if (!activeId || downloading) return;
+    setDownloading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/areas/${area.id}/analyses/${activeId}/report.pdf`);
+      if (!res.ok) {
+        const d = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(d?.error ?? `Report download failed (HTTP ${res.status}).`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `climascope-report-area-${area.id}-analysis-${activeId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Report download failed.");
+    } finally {
+      setDownloading(false);
+    }
   }
 
   async function runAnalysis() {
@@ -226,17 +253,30 @@ export function ResultsPanel({ area, canRun }: { area: AreaPublic; canRun: boole
             engineering assessments of individual buildings.
           </p>
         </div>
-        {canRun && (
-          <button
-            type="button"
-            onClick={() => void runAnalysis()}
-            disabled={running || loading !== null}
-            className="btn-primary"
-          >
-            {running && <Spinner />}
-            {running ? "Running…" : "Re-run analysis"}
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {canRun && activeId !== null && (
+            <button
+              type="button"
+              onClick={() => void downloadReport()}
+              disabled={downloading || loading !== null}
+              className="btn-secondary"
+            >
+              {downloading && <Spinner />}
+              {downloading ? "Preparing…" : "Download PDF report"}
+            </button>
+          )}
+          {canRun && (
+            <button
+              type="button"
+              onClick={() => void runAnalysis()}
+              disabled={running || loading !== null}
+              className="btn-primary"
+            >
+              {running && <Spinner />}
+              {running ? "Running…" : "Re-run analysis"}
+            </button>
+          )}
+        </div>
       </div>
 
       {list.length > 1 && (

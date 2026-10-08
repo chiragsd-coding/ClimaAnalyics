@@ -34,9 +34,11 @@ import {
   HttpError,
   canEditArea,
   canRunAnalyses,
+  hasAreaAccess,
   requireRole,
   requireAreaAccess,
 } from "~/lib/rbac";
+import { buildReportPdf, loadReportData, mergedHazardSources } from "~/lib/report";
 import {
   runAnalysisForArea,
   fetchStructureScores,
@@ -515,20 +517,56 @@ const getAnalysisSources = route("GET", "/api/areas/:id/analyses/:aid/sources", 
   if (!row) throw new HttpError(404, "Analysis not found.");
   // Per-structure source metadata (dataset, resolution, attribution) is
   // uniform per hazard dimension — dedupe across a sample of score rows.
-  const merged: Record<string, unknown> = {};
-  const rows = db
-    .query<{ sources: string | null }, [number]>(
-      "SELECT sources FROM structure_scores WHERE analysis_id = ? LIMIT 25"
-    )
-    .all(parseId(params.aid));
-  for (const r of rows) {
-    const s = parseJsonSafe<{ hazards?: Record<string, unknown> }>(r.sources);
-    for (const [hid, meta] of Object.entries(s?.hazards ?? {})) {
-      if (!(hid in merged)) merged[hid] = meta;
-    }
-  }
-  return json({ analysis_id: row.id, hazards: merged });
+  return json({ analysis_id: row.id, hazards: mergedHazardSources(row.id) });
 });
+
+/**
+ * Slice 6: single gate point for the PDF report tier (Free → demo-only,
+ * Pro/Enterprise → downloads). Flip this to a subscription check later.
+ */
+function reportTierAllowed(_user: SafeUser): boolean {
+  return true;
+}
+
+const downloadReportPdf = route(
+  "GET",
+  "/api/areas/:id/analyses/:aid/report.pdf",
+  async ({ user, params }) => {
+    const u = requireUser(user);
+    // Reports are generated for analyst/owner-grade consumers. Viewers cannot
+    // run analyses and cannot download reports (mirrors canRunAnalyses).
+    if (u.role === "viewer") {
+      throw new HttpError(403, "PDF reports require an analyst or admin role on the area.");
+    }
+    if (!reportTierAllowed(u)) {
+      throw new HttpError(403, "PDF reports require a Pro or Enterprise subscription.");
+    }
+    // Per the slice brief this endpoint returns 403 (not the usual 404) when
+    // the area exists but the user has no grant — flagged for lead review.
+    const area = db.query<AreaRow, [number]>("SELECT * FROM areas WHERE id = ?").get(parseId(params.id));
+    if (!area) throw new HttpError(404, "Area not found.");
+    if (!hasAreaAccess(u, area)) {
+      throw new HttpError(403, "You do not have access to this area.");
+    }
+    const row = db
+      .query<AnalysisRow, [number, number]>("SELECT * FROM analyses WHERE id = ? AND area_id = ?")
+      .get(parseId(params.aid), area.id);
+    if (!row) throw new HttpError(404, "Analysis not found.");
+    if (row.status !== "complete") {
+      throw new HttpError(409, "This analysis has not completed; reports are generated once scoring finishes.");
+    }
+    const { bytes } = await buildReportPdf(loadReportData(area, row));
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": `attachment; filename="climascope-report-area-${area.id}-analysis-${row.id}.pdf"`,
+        "content-length": String(bytes.length),
+        "cache-control": "no-store",
+      },
+    });
+  }
+);
 const listStructures = route("GET", "/api/areas/:id/structures", ({ user, params, req }) => {
   const u = requireUser(user);
   const area = requireAreaAccess(u, parseId(params.id));
@@ -599,6 +637,7 @@ const ROUTES: Route[] = [
   getAnalysis,
   getAnalysisScores,
   getAnalysisSources,
+  downloadReportPdf,
   listStructures,
   listUsers,
 ];

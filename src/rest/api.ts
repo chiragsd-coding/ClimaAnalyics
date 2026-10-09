@@ -34,7 +34,6 @@ import {
   HttpError,
   canEditArea,
   canRunAnalyses,
-  hasAreaAccess,
   requireRole,
   requireAreaAccess,
 } from "~/lib/rbac";
@@ -533,20 +532,17 @@ const downloadReportPdf = route(
   "/api/areas/:id/analyses/:aid/report.pdf",
   async ({ user, params }) => {
     const u = requireUser(user);
+    // Area-scoped RBAC first: no access grant on a non-demo area is 404 (the
+    // usual convention — the API never reveals whether an area exists).
+    const area = requireAreaAccess(u, parseId(params.id));
     // Reports are generated for analyst/owner-grade consumers. Viewers cannot
-    // run analyses and cannot download reports (mirrors canRunAnalyses).
+    // run analyses and cannot download reports (mirrors canRunAnalyses). This
+    // fires after access is established, so a viewer with a grant sees 403.
     if (u.role === "viewer") {
       throw new HttpError(403, "PDF reports require an analyst or admin role on the area.");
     }
     if (!reportTierAllowed(u)) {
       throw new HttpError(403, "PDF reports require a Pro or Enterprise subscription.");
-    }
-    // Per the slice brief this endpoint returns 403 (not the usual 404) when
-    // the area exists but the user has no grant — flagged for lead review.
-    const area = db.query<AreaRow, [number]>("SELECT * FROM areas WHERE id = ?").get(parseId(params.id));
-    if (!area) throw new HttpError(404, "Area not found.");
-    if (!hasAreaAccess(u, area)) {
-      throw new HttpError(403, "You do not have access to this area.");
     }
     const row = db
       .query<AnalysisRow, [number, number]>("SELECT * FROM analyses WHERE id = ? AND area_id = ?")

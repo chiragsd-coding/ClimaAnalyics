@@ -9,7 +9,7 @@
  *  (b) the generated report's text contains the CREDIBILITY_RISKS §5
  *      disclaimer sentence and a §4 per-hazard label, and contains none of the
  *      banned words (verified / certified / compliant).
- *  (c) RBAC: an authenticated user without access to the area gets 403.
+ *  (c) RBAC: an authenticated user without access to the area gets 404.
  */
 import { db } from "~/lib/db";
 import { createSession, createUser } from "~/lib/auth";
@@ -164,7 +164,9 @@ async function main() {
       "demo tag missing"
     );
 
-    // (c) RBAC: analyst with no grant on a non-demo area → 403.
+    // (c) RBAC: analyst with no grant on a non-demo area → 404 (same
+    // convention as every other analysis endpoint — the API never reveals
+    // whether an area exists).
     const target = {
       name: `Report RBAC area ${Date.now()}`,
       city: "",
@@ -201,7 +203,7 @@ async function main() {
     checkTrue("c0: owner (granted) can download", ownerRbac.status === 200, `status=${ownerRbac.status}`);
     checkTrue("c1: owner download is a PDF", new TextDecoder().decode(ownerRbac.body.slice(0, 5)) === "%PDF-");
 
-    // unrelated analyst user, no grant → 403 (per slice brief; not the usual 404)
+    // unrelated analyst user, no grant → 404 (per the app-wide RBAC convention)
     const stranger = await createUser({
       email: `report-stranger-${Date.now()}@throwaway.local`,
       name: "Report Stranger",
@@ -210,7 +212,7 @@ async function main() {
     });
     userIds.push(stranger.id);
     const strangerRes = await getReportBytes(cookieFor(stranger.id), rbacAreaId, rbacAnalysisId);
-    check("c2: user without access gets 403", strangerRes.status, 403);
+    check("c2: user without access gets 404", strangerRes.status, 404);
 
     // unauthenticated → 401
     const anon = await getReportBytes("", rbacAreaId, rbacAnalysisId);

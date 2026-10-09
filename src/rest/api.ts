@@ -37,6 +37,13 @@ import {
   requireRole,
   requireAreaAccess,
 } from "~/lib/rbac";
+import {
+  PLANS,
+  canCreateOwnedArea,
+  canDownloadReport,
+  canRunPaidAnalysis,
+  upsellMessage,
+} from "~/lib/plans";
 import { buildReportPdf, loadReportData, mergedHazardSources } from "~/lib/report";
 import {
   runAnalysisForArea,
@@ -275,6 +282,12 @@ function dbInsertArea(input: Record<string, unknown>, user: SafeUser): AreaRow {
 const createArea = route("POST", "/api/areas", async ({ user, body }) => {
   const u = requireUser(user);
   requireRole(u, ["admin", "analyst"]);
+  // Slice 6 paywall: creating an owned area is a Pro+ feature. The demo area
+  // is the free marketing hook — it is seeded by admins, not created via this
+  // form, and remains fully viewable/runnable on Free.
+  if (!canCreateOwnedArea(u)) {
+    throw new HttpError(403, upsellMessage("Owned areas"));
+  }
   const area = dbInsertArea(asRecord(body), u);
   // Ingest footprints inline, but under a hard deadline: Overpass is
   // best-effort and must never leave the create flow hanging. On failure the
@@ -447,6 +460,11 @@ const createAnalysis = route("POST", "/api/areas/:id/analyses", async ({ user, p
   const u = requireUser(user);
   const area = requireAreaAccess(u, parseId(params.id));
   if (!canRunAnalyses(u)) throw new HttpError(403, "Viewers cannot run analyses.");
+  // Slice 6 paywall: running analyses on the demo area stays open to Free
+  // (the demo experience); owned-area analyses are a paid feature.
+  if (area.is_demo !== 1 && !canRunPaidAnalysis(u)) {
+    throw new HttpError(403, upsellMessage("Analyses outside the demo area"));
+  }
   db.run(
     "DELETE FROM analyses WHERE area_id = ? AND status IN ('pending','running')",
     [area.id]
@@ -520,11 +538,11 @@ const getAnalysisSources = route("GET", "/api/areas/:id/analyses/:aid/sources", 
 });
 
 /**
- * Slice 6: single gate point for the PDF report tier (Free → demo-only,
- * Pro/Enterprise → downloads). Flip this to a subscription check later.
+ * Slice 6: PDF downloads are gated by subscription tier — Free may not
+ * download reports even from the demo area; Pro and Enterprise may.
  */
-function reportTierAllowed(_user: SafeUser): boolean {
-  return true;
+function reportTierAllowed(user: SafeUser): boolean {
+  return canDownloadReport(user);
 }
 
 const downloadReportPdf = route(
@@ -542,7 +560,10 @@ const downloadReportPdf = route(
       throw new HttpError(403, "PDF reports require an analyst or admin role on the area.");
     }
     if (!reportTierAllowed(u)) {
-      throw new HttpError(403, "PDF reports require a Pro or Enterprise subscription.");
+      throw new HttpError(
+        403,
+        `PDF reports require a Pro or Enterprise subscription — ${PLANS.proPriceLabel} unlocks owned areas, saved results, and PDF reports. ${PLANS.billingNote}`
+      );
     }
     const row = db
       .query<AnalysisRow, [number, number]>("SELECT * FROM analyses WHERE id = ? AND area_id = ?")
@@ -599,6 +620,24 @@ const listStructures = route("GET", "/api/areas/:id/structures", ({ user, params
   });
 });
 
+// -- slice 6: enterprise lead capture ------------------------------------------
+// In-app contact/request form — saves a lead row for the owner to follow up.
+// No email integration exists yet, so nothing is sent anywhere.
+
+const createLeadRequest = route("POST", "/api/contact/lead", ({ user, body }) => {
+  const u = requireUser(user);
+  const input = asRecord(body);
+  const name = reqString(input, "name", 120);
+  const org = optString(input, "org", 120);
+  const note = optString(input, "note", 2000);
+  const res = db.run("INSERT INTO lead_requests (name, org, note) VALUES (?, ?, ?)", [
+    name.trim(),
+    org.trim(),
+    note.trim(),
+  ]);
+  return json({ ok: true, id: Number(res.lastInsertRowid) }, 201);
+});
+
 // -- users (admin) -------------------------------------------------------------
 
 const listUsers = route("GET", "/api/users", ({ user }) => {
@@ -636,6 +675,7 @@ const ROUTES: Route[] = [
   downloadReportPdf,
   listStructures,
   listUsers,
+  createLeadRequest,
 ];
 
 export async function handleApiRequest(req: Request): Promise<Response> {

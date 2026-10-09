@@ -53,7 +53,13 @@ async function main() {
   const created: SeedEntry[] = [];
 
   const admin = await ensureUser("admin@climascope.app", "ClimaScope Admin", "admin", created);
-  await ensureUser("demo@climascope.app", "Demo Analyst", "analyst", created);
+  const demo = await ensureUser("demo@climascope.app", "Demo Analyst", "analyst", created);
+  // Slice 6 tiers: the platform owner/operator account is Enterprise; the demo
+  // analyst is the canonical Free account (demo area only). Any other seed
+  // users stay 'free' (the users.tier default).
+  db.run("UPDATE users SET tier = 'enterprise' WHERE id = ?", [admin.id]);
+  db.run("UPDATE users SET tier = 'free' WHERE id = ?", [demo.id]);
+  console.log(`tiers: admin → enterprise, demo → free`);
 
   // Demo area — Downtown Miami.
   const climate = "tropical";

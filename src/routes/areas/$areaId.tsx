@@ -306,7 +306,7 @@ function AreaDetailPage() {
         {/* Slice 4 — risk results: KPIs, risk map, distribution, sortable table,
             status/provenance, saved analyses (auto-loads the latest). */}
         <div className="mt-6">
-          <ResultsPanel area={area} canRun={boot.user.role !== "viewer"} />
+          <ResultsPanel area={area} canRun={boot.user.role !== "viewer"} tier={boot.user.tier} />
         </div>
 
       </div>

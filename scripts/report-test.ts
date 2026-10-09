@@ -113,6 +113,10 @@ async function main() {
       password: "throwaway-pass-12345",
       role: "analyst",
     });
+    // Slice 6: report downloads are a Pro+ feature — the fixture user that
+    // exercises download paths (a1–a5, c0/c1) must be Pro tier, or the paywall
+    // 403s before the report is built.
+    db.run("UPDATE users SET tier = 'pro' WHERE id = ?", [owner.id]);
     userIds.push(owner.id);
     const ownerCookie = cookieFor(owner.id);
 

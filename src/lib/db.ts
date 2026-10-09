@@ -150,6 +150,23 @@ function migrate(db: Database) {
     `);
     db.exec(`PRAGMA user_version = 3;`);
   }
+  // v4 — slice 6: subscription tiers + enterprise lead capture. Existing
+  // users default to 'free'; the seed script promotes admin → enterprise and
+  // demo → free. Idempotent for installs that already ran v1–v3.
+  if (version < 4) {
+    db.exec(`
+      ALTER TABLE users ADD COLUMN tier TEXT NOT NULL DEFAULT 'free'
+        CHECK (tier IN ('free','pro','enterprise'));
+      CREATE TABLE IF NOT EXISTS lead_requests (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL,
+        org        TEXT NOT NULL DEFAULT '',
+        note       TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+    `);
+    db.exec(`PRAGMA user_version = 4;`);
+  }
 }
 
 export type UserRow = {
@@ -158,6 +175,7 @@ export type UserRow = {
   name: string;
   password_hash: string;
   role: "admin" | "analyst" | "viewer";
+  tier: "free" | "pro" | "enterprise";
   created_at: string;
 };
 

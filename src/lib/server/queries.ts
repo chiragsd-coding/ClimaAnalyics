@@ -11,6 +11,7 @@ import { SESSION_COOKIE, getSessionUser, type SafeUser } from "~/lib/auth";
 import { db, type AreaRow, type AnalysisRow } from "~/lib/db";
 import { canEditArea, requireAreaAccess } from "~/lib/rbac";
 import type { Role } from "~/lib/rbac";
+import type { Tier } from "~/lib/plans";
 
 export type DashboardArea = {
   id: number;
@@ -28,7 +29,7 @@ export type DashboardArea = {
   latest_analysis: { id: number; status: string; created_at: string } | null;
 };
 
-export type DashboardUser = { id: number; name: string; email: string; role: Role };
+export type DashboardUser = { id: number; name: string; email: string; role: Role; tier: Tier };
 
 export type DashboardData = {
   user: DashboardUser | null;
@@ -124,7 +125,7 @@ export const getDashboardDataFn = createServerFn().handler((): DashboardData => 
   }
 
   return {
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, tier: user.tier },
     areas: areas.map((a) => ({
       id: a.id,
       name: a.name,
@@ -166,7 +167,7 @@ export const getAreaDataFn = createServerFn()
       area = null;
     }
     if (!area) {
-      return { user: { id: user.id, name: user.name, email: user.email, role: user.role }, area: null, canEdit: false };
+      return { user: { id: user.id, name: user.name, email: user.email, role: user.role, tier: user.tier }, area: null, canEdit: false };
     }
 
     const latest =
@@ -181,7 +182,7 @@ export const getAreaDataFn = createServerFn()
       ).get(area.id)!.n;
 
     return {
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, tier: user.tier },
       area: {
         id: area.id,
         name: area.name,

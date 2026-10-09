@@ -7,10 +7,10 @@ import { db, type UserRow } from "./db";
 export const SESSION_COOKIE = "climascope_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-export type SafeUser = Pick<UserRow, "id" | "email" | "name" | "role" | "created_at">;
+export type SafeUser = Pick<UserRow, "id" | "email" | "name" | "role" | "tier" | "created_at">;
 
 export function toSafeUser(u: UserRow): SafeUser {
-  return { id: u.id, email: u.email, name: u.name, role: u.role, created_at: u.created_at };
+  return { id: u.id, email: u.email, name: u.name, role: u.role, tier: u.tier, created_at: u.created_at };
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -78,11 +78,14 @@ export async function createUser(input: {
   name: string;
   password: string;
   role: UserRow["role"];
+  /** Slice 6: subscription tier; new accounts default to free. */
+  tier?: UserRow["tier"];
 }): Promise<UserRow> {
   const password_hash = await hashPassword(input.password);
+  const tier = input.tier ?? "free";
   const res = db.run(
-    "INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)",
-    [input.email.trim(), input.name.trim(), password_hash, input.role]
+    "INSERT INTO users (email, name, password_hash, role, tier) VALUES (?, ?, ?, ?, ?)",
+    [input.email.trim(), input.name.trim(), password_hash, input.role, tier]
   );
   return findUserById(Number(res.lastInsertRowid))!;
 }

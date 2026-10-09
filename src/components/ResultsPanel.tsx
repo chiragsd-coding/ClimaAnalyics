@@ -75,7 +75,7 @@ function fmt(n: number | null | undefined, dp = 2): string {
   return n === null || n === undefined || Number.isNaN(n) ? "—" : n.toFixed(dp);
 }
 
-export function ResultsPanel({ area, canRun }: { area: AreaPublic; canRun: boolean }) {
+export function ResultsPanel({ area, canRun, tier }: { area: AreaPublic; canRun: boolean; tier?: "free" | "pro" | "enterprise" }) {
   const [list, setList] = useState<AnalysisListRow[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [scores, setScores] = useState<ScoreRow[]>([]);

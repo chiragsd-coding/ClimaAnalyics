@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { MapPicker } from "~/components/MapPicker";
 import { Nav } from "~/components/Nav";
 import { Alert, Spinner } from "~/components/ui";
+import { UpsellPanel } from "~/components/Plans";
 import { CLIMATE_TYPES, HAZARD_LABELS } from "~/lib/climates";
 import type { LatLng } from "~/lib/leaflet";
 import { getSessionUserFn } from "~/lib/server/queries";
@@ -131,7 +132,13 @@ function NewAreaPage() {
           Building footprints are pulled live from OpenStreetMap right after the area is created.
         </p>
 
-        <form onSubmit={submit} className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+        {user.tier === "free" ? (
+        <div className="mt-6">
+          <UpsellPanel heading="Creating your own area unlocks on Pro"
+            body="Owned areas — your own coordinates, radius and saved results — come with Pro. The Downtown Miami demo area stays free for every account." />
+        </div>
+      ) : (
+      <form onSubmit={submit} className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
           {/* Map + radius */}
           <div className="space-y-4">
             <MapPicker center={center} radiusKm={radiusKm} onPick={pick} />
@@ -336,6 +343,7 @@ function NewAreaPage() {
             </p>
           </div>
         </form>
+      )}
       </div>
     </main>
   );

@@ -12,8 +12,8 @@ Define an area (click the map or enter coordinates + radius, 0.5–10 km), pick 
 | 2 | Map-driven area definition + OSM footprint ingestion | ✅ Done |
 | 3 | Scoring engine v1 — 8 hazard dimensions, spec combination rule (maxmean-v1), persisted analyses, area-scoped REST | ✅ Done (Miami demo band-checked, avg 4.00) |
 | 4 | Results UI — risk-colored map overlay, sortable table, distribution chart, KPI cards, saved results, provenance/sources disclosure | ✅ Done (verified in-browser on the live site) |
-| 5 | PDF area report (risk profile + top-risk structures) | 🔨 In progress |
-| 6 | Subscription tiers (Free demo-only / Pro $99-mo / Enterprise custom), paywall, polish | ⏳ Queued |
+| 5 | PDF area report (risk profile + top-risk structures) | ✅ Done (verified live: PDF endpoint, RBAC 401/403/404, all report tests green) |
+| 6 | Subscription tiers (Free demo-only / Pro $99-mo / Enterprise custom), paywall, polish | ✅ Done (tiers live, gates in-app; billing pending Stripe connection) |
 
 ## Stack
 

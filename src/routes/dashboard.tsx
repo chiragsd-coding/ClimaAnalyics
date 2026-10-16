@@ -2,6 +2,7 @@ import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { Nav } from "~/components/Nav";
+import { PlanBadge } from "~/components/Plans";
 import {
   Alert,
   ClimateChip,
@@ -40,6 +41,9 @@ function Dashboard() {
               {data.areas.length} area{data.areas.length === 1 ? "" : "s"} you can access
               {user.role === "viewer" && " · read-only access"}
             </p>
+            <div className="mt-2">
+              <PlanBadge tier={user.tier} />
+            </div>
           </div>
           {(user.role === "admin" || user.role === "analyst") && (
             <p className="text-xs text-slate-400">

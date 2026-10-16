@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { AreaMap, RISK_COLORS, type RiskPoint } from "~/components/AreaMap";
+import { UpsellPanel } from "~/components/Plans";
 import { Alert, RiskBadge, Spinner } from "~/components/ui";
 import { climateByValue } from "~/lib/climates";
+import { tierFor } from "~/lib/plans";
 import type { AreaPublic } from "~/lib/server/queries";
 
 /** Hazard dimension id (as stored by the engine, uppercase HID) → human label. */
@@ -127,7 +129,7 @@ export function ResultsPanel({ area, canRun, tier }: { area: AreaPublic; canRun:
   }
 
   async function downloadReport() {
-    if (!activeId || downloading) return;
+    if (!activeId || downloading || tierFor(tier) === "free") return;
     setDownloading(true);
     setError(null);
     try {
@@ -254,7 +256,7 @@ export function ResultsPanel({ area, canRun, tier }: { area: AreaPublic; canRun:
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {canRun && activeId !== null && (
+          {canRun && activeId !== null && tierFor(tier) !== "free" && (
             <button
               type="button"
               onClick={() => void downloadReport()}
@@ -279,6 +281,14 @@ export function ResultsPanel({ area, canRun, tier }: { area: AreaPublic; canRun:
         </div>
       </div>
 
+      {tierFor(tier) === "free" && (
+        <div className="border-b border-slate-100 px-5 py-4">
+          <UpsellPanel
+            heading="PDF reports unlock on Pro"
+            body="PDF reports with the full risk profile, per-layer provenance and top-risk structures are a Pro feature ($99/month — owned areas, saved results, PDF reports)."
+          />
+        </div>
+      )}
       {list.length > 1 && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 px-5 py-2.5">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">

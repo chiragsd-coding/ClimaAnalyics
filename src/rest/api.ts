@@ -44,6 +44,11 @@ import {
   canRunPaidAnalysis,
   upsellMessage,
 } from "~/lib/plans";
+import {
+  BillingProviderError,
+  handleBillingWebhook,
+  resolveBillingProvider,
+} from "~/lib/billing";
 import { buildReportPdf, loadReportData, mergedHazardSources } from "~/lib/report";
 import {
   runAnalysisForArea,
@@ -72,6 +77,8 @@ type Ctx = {
   params: Record<string, string>;
   user: SafeUser | null;
   body: unknown;
+  /** Raw (unparsed) body text — needed for webhook signature verification. */
+  rawBody: string;
 };
 type Handler = (ctx: Ctx) => Response | Promise<Response>;
 
@@ -651,6 +658,45 @@ const listUsers = route("GET", "/api/users", ({ user }) => {
   return json({ users: rows });
 });
 
+// -- billing (env-selected provider; see src/lib/billing) ----------------------
+// Checkout requires a signed-in user. With no real provider credentials the
+// endpoint stays honest: no checkout URL is fabricated and PLANS.billingNote
+// is returned verbatim. A tier can only become pro through a signature-
+// verified provider webhook below — never through this endpoint.
+const billingCheckout = route("POST", "/api/billing/checkout", async ({ user, req }) => {
+  const u = requireUser(user);
+  const resolved = resolveBillingProvider();
+  if (!resolved.provider) {
+    // Honest no-creds state — identical to the copy shown in the Plans panel.
+    return json({ billingEnabled: false, provider: null, billingNote: PLANS.billingNote });
+  }
+  const origin = new URL(req.url).origin;
+  try {
+    const session = await resolved.provider.createCheckoutSession(u, origin);
+    return json({ billingEnabled: true, provider: session.provider, checkoutUrl: session.url });
+  } catch (err) {
+    if (err instanceof BillingProviderError) {
+      // The provider itself rejected/failed — surfaced as 502, not fabricated.
+      throw new HttpError(502, err.message);
+    }
+    throw err;
+  }
+});
+
+// Webhook receivers are provider-to-server: no session auth (they arrive
+// unauthenticated by design) — the signature over the raw body is the proof.
+// Verified `checkout.session.completed` (Stripe) / `payment_link.paid`
+// (Razorpay) events are the ONLY path that flips a user to Pro.
+const billingWebhook = route("POST", "/api/billing/webhook/:provider", ({ params, req, rawBody }) => {
+  const signature =
+    req.headers.get("stripe-signature") ??
+    req.headers.get("x-razorpay-signature") ??
+    req.headers.get("razorpay-signature");
+  const result = handleBillingWebhook(params.provider, rawBody, signature);
+  if (!result.ok) throw new HttpError(400, result.reason);
+  return json({ received: true, handled: result.handled, ...(result.userId ? { userId: result.userId } : {}) });
+});
+
 // -- dispatch -------------------------------------------------------------------
 
 const ROUTES: Route[] = [
@@ -676,6 +722,8 @@ const ROUTES: Route[] = [
   listStructures,
   listUsers,
   createLeadRequest,
+  billingCheckout,
+  billingWebhook,
 ];
 
 export async function handleApiRequest(req: Request): Promise<Response> {
@@ -688,18 +736,20 @@ export async function handleApiRequest(req: Request): Promise<Response> {
       const params: Record<string, string> = {};
       r.paramNames.forEach((name, i) => (params[name] = decodeURIComponent(m[i + 1])));
       const user = getSessionUser(readCookie(req, SESSION_COOKIE));
+      const text = await req.text();
+      // Billing webhooks carry provider signatures over the RAW body — they
+      // are not session-authenticated and must not be JSON-parsed here (the
+      // signature covers the exact bytes the provider sent).
+      const isWebhook = pathname.startsWith("/api/billing/webhook/");
       let body: unknown = undefined;
-      if (req.method === "POST" || req.method === "PATCH") {
-        const text = await req.text();
-        if (text) {
-          try {
-            body = JSON.parse(text);
-          } catch {
-            throw new ValidationError("Request body must be valid JSON.");
-          }
+      if (!isWebhook && text) {
+        try {
+          body = JSON.parse(text);
+        } catch {
+          throw new ValidationError("Request body must be valid JSON.");
         }
       }
-      return await r.handler({ req, params, user, body });
+      return await r.handler({ req, params, user, body, rawBody: text });
     }
     return json({ error: "Not found." }, 404);
   } catch (err) {

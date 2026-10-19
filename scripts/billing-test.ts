@@ -65,6 +65,11 @@ const ENV_VARS = [
   "RAZORPAY_WEBHOOK_SECRET",
 ];
 const envSnapshot = new Map<string, string | undefined>(ENV_VARS.map((k) => [k, process.env[k]]));
+// Normalize to a clean baseline: tests configure exactly what they need via
+// setEnv, so ambient values (e.g. a local .env with DUMMY_ placeholders) must
+// not leak into the "no env" expectations (s1/s2). restoreEnv() puts the
+// snapshot back when the run ends.
+for (const k of ENV_VARS) delete process.env[k];
 function setEnv(values: Record<string, string | undefined>): void {
   for (const [k, v] of Object.entries(values)) {
     if (v === undefined) delete process.env[k];
@@ -279,6 +284,32 @@ async function main() {
     check("h7: dummy creds → billingEnabled false", dummy.json.billingEnabled, false);
     check("h8: dummy creds → billingNote verbatim", dummy.json.billingNote, PLANS.billingNote);
     checkTrue("h9: dummy creds → no checkoutUrl", !("checkoutUrl" in dummy.json));
+    setEnv({});
+
+    // -- (h2) dummy creds: even a validly-signed upgrade event must not upgrade --
+    console.log("(h2) dummy creds: signed upgrade event rejected");
+    setEnv({
+      BILLING_PROVIDER: "stripe",
+      STRIPE_SECRET_KEY: "DUMMY_sk",
+      STRIPE_PRICE_ID: "DUMMY_price",
+      STRIPE_WEBHOOK_SECRET: "DUMMY_whsec",
+    });
+    const dummySigned = stripeSignedBody("evt_dummy_signed", userId, "DUMMY_whsec");
+    const dummyHook = await api(null, "POST", "/api/billing/webhook/stripe", {
+      body: dummySigned.body,
+      headers: { "stripe-signature": dummySigned.signature },
+    });
+    check("h10: signed event while unconfigured → 400", dummyHook.status, 400);
+    checkTrue("h11: reason names placeholders", String(dummyHook.json.error ?? "").includes("placeholder"));
+    check(
+      "h12: tier stays free",
+      db.query<{ tier: string }, [number]>("SELECT tier FROM users WHERE id = ?").get(userId)!.tier,
+      "free"
+    );
+    checkTrue(
+      "h13: no billing_events row written",
+      (db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM billing_events WHERE event_id = ?").get("evt_dummy_signed")?.n ?? 0) === 0
+    );
     setEnv({});
 
     // -- (u) tier upgrade on verified event --------------------------------------

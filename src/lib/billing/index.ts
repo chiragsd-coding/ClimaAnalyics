@@ -224,6 +224,13 @@ export function handleBillingWebhook(
   if (resolved.provider && resolved.provider.id !== providerId) {
     return { ok: false, reason: `Webhook provider "${providerId}" does not match BILLING_PROVIDER.` };
   }
+  if (!resolved.provider) {
+    // Placeholder/dummy credentials: there is no real payment channel, so even
+    // a signature that verifies (e.g. signed with a committed placeholder
+    // secret) proves nothing about money having moved. Never upgrade a tier
+    // while the gateway is not fully configured with real credentials.
+    return { ok: false, reason: resolved.reason };
+  }
   const intent = providerId === "stripe" ? stripeUpgradeIntent(result.event) : razorpayUpgradeIntent(result.event);
   if (!intent) return { ok: true, handled: false }; // verified event we don't act on
   const applied = applyProUpgrade(providerId, result.event, intent);

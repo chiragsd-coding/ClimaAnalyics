@@ -34,6 +34,29 @@ export function UpsellPanel({
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkoutState, setCheckoutState] = useState<"idle" | "opening" | "disabled">("idle");
+  async function startCheckout() {
+    setCheckoutState("opening");
+    setError(null);
+    try {
+      const res = await fetch("/api/billing/checkout", { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as {
+        billingEnabled?: boolean;
+        checkoutUrl?: string;
+      };
+      if (data.billingEnabled && data.checkoutUrl) {
+        // Provider-hosted checkout (Stripe Checkout / Razorpay Payment Link).
+        window.location.assign(data.checkoutUrl);
+        return;
+      }
+      // No provider connected: keep the honest state — show the exact
+      // billing note (same copy already displayed in this panel).
+      setCheckoutState("disabled");
+    } catch {
+      setCheckoutState("idle");
+      setError("Checkout could not be started.");
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,6 +95,18 @@ export function UpsellPanel({
         ))}
       </div>
 
+      {checkoutState === "disabled" ? (
+        <p className="mt-3 text-sm font-medium text-slate-600">{PLANS.billingNote}</p>
+      ) : (
+        <button
+          type="button"
+          onClick={() => void startCheckout()}
+          className="btn-primary mt-3"
+          disabled={checkoutState === "opening"}
+        >
+          {checkoutState === "opening" ? "Opening checkout…" : `Upgrade to Pro — ${PLANS.tiers.pro.price}`}
+        </button>
+      )}
       <p className="mt-4 text-xs text-slate-500">{PLANS.billingNote}</p>
 
       <div className="mt-5 border-t border-slate-200 pt-5">

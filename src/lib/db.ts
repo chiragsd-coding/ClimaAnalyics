@@ -167,6 +167,43 @@ function migrate(db: Database) {
     `);
     db.exec(`PRAGMA user_version = 4;`);
   }
+  // v5 — billing gateway: record which provider (if any) upgraded a user to
+  // Pro and the provider's customer/subscription ids, plus an idempotency
+  // table for verified webhook events. Columns are guarded so a partially
+  // applied migration can be re-run safely.
+  if (version < 5) {
+    const userCols = new Set(
+      db
+        .query<{ name: string }, []>("PRAGMA table_info(users)")
+        .all()
+        .map((c) => c.name)
+    );
+    if (!userCols.has("billing_provider")) {
+      db.exec(`ALTER TABLE users ADD COLUMN billing_provider TEXT NOT NULL DEFAULT '';`);
+    }
+    if (!userCols.has("billing_customer_id")) {
+      db.exec(`ALTER TABLE users ADD COLUMN billing_customer_id TEXT NOT NULL DEFAULT '';`);
+    }
+    if (!userCols.has("billing_subscription_id")) {
+      db.exec(`ALTER TABLE users ADD COLUMN billing_subscription_id TEXT NOT NULL DEFAULT '';`);
+    }
+    if (!userCols.has("billing_updated_at")) {
+      db.exec(`ALTER TABLE users ADD COLUMN billing_updated_at TEXT;`);
+    }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS billing_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider     TEXT NOT NULL CHECK (provider IN ('stripe','razorpay')),
+        event_id     TEXT NOT NULL,
+        event_type   TEXT NOT NULL DEFAULT '',
+        user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        payload      TEXT,
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        UNIQUE (provider, event_id)
+      );
+    `);
+    db.exec(`PRAGMA user_version = 5;`);
+  }
 }
 
 export type UserRow = {
@@ -176,6 +213,10 @@ export type UserRow = {
   password_hash: string;
   role: "admin" | "analyst" | "viewer";
   tier: "free" | "pro" | "enterprise";
+  billing_provider: string;
+  billing_customer_id: string;
+  billing_subscription_id: string;
+  billing_updated_at: string | null;
   created_at: string;
 };
 

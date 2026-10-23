@@ -127,7 +127,7 @@ export type ReportInput = {
 // Text helpers
 // ---------------------------------------------------------------------------
 
-function sanitize(s: string): string {
+export function sanitize(s: string): string {
   // WinAnsi-safe: pdf-lib's standard 14 fonts only encode Latin-1 + a few
   // punctuation. Map the common non-WinAnsi maths glyphs; drop the rest.
   return s
@@ -151,7 +151,7 @@ function sanitize(s: string): string {
     });
 }
 
-function wrapText(s: string, maxChars: number): string[] {
+export function wrapText(s: string, maxChars: number): string[] {
   if (s.length <= maxChars) return [s];
   const words = s.split(/\s+/);
   const lines: string[] = [];
@@ -180,14 +180,14 @@ type DrawOpts = {
 // Builder
 // ---------------------------------------------------------------------------
 
-const PAGE_W = 595.28; // A4
-const PAGE_H = 841.89;
-const MARGIN = 50;
+export const PAGE_W = 595.28; // A4
+export const PAGE_H = 841.89;
+export const MARGIN = 50;
 const CONTENT_W = PAGE_W - MARGIN * 2;
-const INK = rgb(0.078, 0.09, 0.125); // slate-900
-const MUTED = rgb(0.4, 0.44, 0.52);
-const TEAL = rgb(0.047, 0.418, 0.408);
-const RULE = rgb(0.85, 0.87, 0.9);
+export const INK = rgb(0.078, 0.09, 0.125); // slate-900
+export const MUTED = rgb(0.4, 0.44, 0.52);
+export const TEAL = rgb(0.047, 0.418, 0.408);
+export const RULE = rgb(0.85, 0.87, 0.9);
 
 export async function buildReportPdf(input: ReportInput): Promise<{ bytes: Uint8Array; text: string }> {
   const texts: string[] = [];
@@ -437,7 +437,7 @@ export async function buildReportPdf(input: ReportInput): Promise<{ bytes: Uint8
   return { bytes, text: texts.join("\n") };
 }
 
-function drawTextWidth(f: PDFFont, size: number, s: string): number {
+export function drawTextWidth(f: PDFFont, size: number, s: string): number {
   return f.widthOfTextAtSize(sanitize(s), size);
 }
 

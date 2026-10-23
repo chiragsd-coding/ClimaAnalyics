@@ -50,6 +50,7 @@ import {
   resolveBillingProvider,
 } from "~/lib/billing";
 import { buildReportPdf, loadReportData, mergedHazardSources } from "~/lib/report";
+import { buildAreaReportPdf, loadAreaReportData } from "~/lib/area-report";
 import {
   runAnalysisForArea,
   fetchStructureScores,
@@ -591,6 +592,41 @@ const downloadReportPdf = route(
     });
   }
 );
+/**
+ * Area-level rooftop PDF report (backlog b4580d9e): serves the LATEST
+ * completed analysis of the area with a rooftop-level visualization page.
+ * Reuses the per-analysis report endpoint's access checks verbatim:
+ *  - area-scoped RBAC (no grant on a non-demo area → 404, app convention),
+ *  - viewer role → 403, free tier → 403 with the Pro upsell copy.
+ * No completed analysis → 404 JSON (same error convention, never HTML).
+ */
+const downloadAreaReportPdf = route("GET", "/api/areas/:id/report.pdf", async ({ user, params }) => {
+  const u = requireUser(user);
+  const area = requireAreaAccess(u, parseId(params.id));
+  if (u.role === "viewer") {
+    throw new HttpError(403, "PDF reports require an analyst or admin role on the area.");
+  }
+  if (!reportTierAllowed(u)) {
+    throw new HttpError(
+      403,
+      `PDF reports require a Pro or Enterprise subscription — ${PLANS.proPriceLabel} unlocks owned areas, saved results, and PDF reports. ${PLANS.billingNote}`
+    );
+  }
+  const data = loadAreaReportData(area);
+  if (!data) {
+    throw new HttpError(404, "No completed analysis for this area; run an analysis first.");
+  }
+  const { bytes } = await buildAreaReportPdf(data);
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      "content-type": "application/pdf",
+      "content-disposition": `attachment; filename="climascope-area-report-${area.id}-analysis-${data.analysis.id}.pdf"`,
+      "content-length": String(bytes.length),
+      "cache-control": "no-store",
+    },
+  });
+});
 const listStructures = route("GET", "/api/areas/:id/structures", ({ user, params, req }) => {
   const u = requireUser(user);
   const area = requireAreaAccess(u, parseId(params.id));
@@ -719,6 +755,7 @@ const ROUTES: Route[] = [
   getAnalysisScores,
   getAnalysisSources,
   downloadReportPdf,
+  downloadAreaReportPdf,
   listStructures,
   listUsers,
   createLeadRequest,

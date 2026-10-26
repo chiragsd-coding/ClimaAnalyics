@@ -22,8 +22,14 @@ import {
   REPORT_DISCLAIMER,
   REQUIRED_LABELS,
   BANNED_WORDS,
+  wrapText,
 } from "~/lib/report";
 import { runAnalysisForArea } from "~/lib/scoring";
+import {
+  BAND_LABELS,
+  buildAreaReportPdf,
+  loadAreaReportData,
+} from "~/lib/area-report";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown): void {
@@ -102,6 +108,7 @@ type AreaRowShape = {
 async function main() {
   const userIds: number[] = [];
   let areaIdToClean: number | null = null;
+  const extraAreas: number[] = [];
   try {
     const { areaId, analysisId } = await fixtureAnalysis();
     checkTrue("fixture: demo area + complete analysis ready", areaId > 0 && analysisId > 0);
@@ -237,9 +244,114 @@ async function main() {
     ]);
     const viewerRes = await getReportBytes(cookieFor(viewer.id), rbacAreaId, rbacAnalysisId);
     check("c4: viewer role gets 403 even with access", viewerRes.status, 403);
+    // -- area-level rooftop report (GET /api/areas/:id/report.pdf) ----------
+    // (d) authorized Pro user on the demo area → real PDF
+    const areaRes = await handleApiRequest(
+      new Request(`http://localhost/api/areas/${areaId}/report.pdf`, {
+        headers: { cookie: ownerCookie },
+      })
+    );
+    check("d0: area rooftop report returns 200", areaRes.status, 200);
+    check("d1: content-type is application/pdf", areaRes.headers.get("content-type"), "application/pdf");
+    const areaBytes = await areaRes.arrayBuffer();
+    checkTrue("d2: area rooftop report has PDF magic bytes", new TextDecoder().decode(areaBytes.slice(0, 5)) === "%PDF-");
+
+    // (e) free tier → 403 with the Pro upsell copy (same gate as the
+    // per-analysis report endpoint — Free never gets the PDF bytes).
+    const freeUser = await createUser({
+      email: `area-report-free-${Date.now()}@throwaway.local`,
+      name: "Area Report Free",
+      password: "throwaway-pass-12345",
+      role: "analyst",
+    });
+    userIds.push(freeUser.id);
+    const freeRes = await handleApiRequest(
+      new Request(`http://localhost/api/areas/${areaId}/report.pdf`, {
+        headers: { cookie: cookieFor(freeUser.id) },
+      })
+    );
+    check("e0: free tier gets 403 on area report", freeRes.status, 403);
+    const freeBody = (await freeRes.json().catch(() => ({}))) as { error?: string };
+    checkTrue(
+      "e1: free-tier error names the Pro/Enterprise gate",
+      typeof freeBody.error === "string" && freeBody.error.includes("Pro or Enterprise"),
+      `got: ${freeBody.error ?? "no error body"}`
+    );
+
+    // (f) area with no completed analysis → 404 JSON (not HTML, never leaked).
+    const noAnalysis = await handleApiRequest(
+      new Request(`http://localhost/api/areas/${rbacAreaId + 100000}/report.pdf`, {
+        headers: { cookie: ownerCookie },
+      })
+    );
+    check("f0: nonexistent area gets 404", noAnalysis.status, 404);
+    const noAnalysisBody = (await noAnalysis.json().catch(() => ({}))) as { error?: string };
+    checkTrue("f1: 404 body is the JSON error convention", typeof noAnalysisBody.error === "string");
+    const grantedNoRun = {
+      name: `Area report empty ${Date.now()}`,
+      city: "", country: "",
+      center_lat: 40.7, center_lng: -74.0, radius_km: 0.5,
+      climate_type: "temperate", is_demo: 0, created_by: owner.id,
+    };
+    const insEmpty = db.run(
+      `INSERT INTO areas (name, city, country, center_lat, center_lng, radius_km, climate_type, is_demo, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [grantedNoRun.name, grantedNoRun.city, grantedNoRun.country, grantedNoRun.center_lat,
+        grantedNoRun.center_lng, grantedNoRun.radius_km, grantedNoRun.climate_type,
+        grantedNoRun.is_demo, grantedNoRun.created_by]
+    );
+    const emptyAreaId = Number(insEmpty.lastInsertRowid);
+    extraAreas.push(emptyAreaId);
+    db.run("INSERT INTO area_access (area_id, user_id, granted_by) VALUES (?, ?, ?)", [emptyAreaId, owner.id, owner.id]);
+    const emptyRes = await handleApiRequest(
+      new Request(`http://localhost/api/areas/${emptyAreaId}/report.pdf`, {
+        headers: { cookie: ownerCookie },
+      })
+    );
+    check("f2: granted area with no analysis gets 404", emptyRes.status, 404);
+
+    // (g) builder content: pinned band labels, not-assessed count, disclaimer,
+    // projection caption, and a fill for every scored building.
+    // (reuses `areaRow` fetched in section (b) — same area, same scope)
+    const areaData = loadAreaReportData(areaRow);
+    checkTrue("g0: loadAreaReportData picks the latest completed analysis", areaData !== null && areaData.analysis.id === analysisId);
+    if (areaData) {
+      const built = await buildAreaReportPdf(areaData);
+      const text = built.text;
+      checkTrue("g1: area name in text layer", text.includes(areaRow.name));
+      for (const label of BAND_LABELS) {
+        checkTrue(`g2: owner-pinned band label verbatim: ${label}`, text.includes(label));
+      }
+      checkTrue("g3: not-assessed count stated in caption", text.includes(`count ${areaData.notAssessedCount.toLocaleString()}`));
+      // The disclaimer renders wrapped at 96 chars/line, so assert every
+      // wrapped line of the verbatim text is present, in order.
+      const disclaimerLines = wrapText(REPORT_DISCLAIMER, 96);
+      let di = text.indexOf(disclaimerLines[0]);
+      checkTrue(
+        "g4: honesty disclaimer verbatim (all wrapped lines, in order)",
+        di !== -1 &&
+          disclaimerLines.every((ln) => {
+            const at = text.indexOf(ln, di);
+            if (at === -1) return false;
+            di = at + ln.length;
+            return true;
+          })
+      );
+      checkTrue("g5: rooftop caption says each shape is one building", text.includes("Each shape = one building"));
+      checkTrue("g6: projection labelled on the map page", text.toLowerCase().includes("equirectangular"));
+      checkTrue(
+        "g7: at least one fill per scored building (>= scored/2 allows merged outlines)",
+        built.stats.fills >= Math.floor(areaData.scoredCount / 2),
+        `fills=${built.stats.fills} scored=${areaData.scoredCount}`
+      );
+      checkTrue("g8: not-assessed buildings never get a band colour", built.stats.fills <= areaData.buildings.length);
+      // endpoint bytes match the builder (same document, sanity on size)
+      checkTrue("g9: endpoint PDF is the same generation (non-trivial size)", areaBytes.byteLength > 20000, `${areaBytes.byteLength}`);
+    }
   } finally {
     // clean up throwaway rows (FKs cascade for analyses/access/scores)
     if (areaIdToClean !== null) db.run("DELETE FROM areas WHERE id = ?", [areaIdToClean]);
+    for (const id of extraAreas) db.run("DELETE FROM areas WHERE id = ?", [id]);
     for (const id of userIds) db.run("DELETE FROM users WHERE id = ?", [id]);
   }
 

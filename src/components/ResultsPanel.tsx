@@ -90,6 +90,7 @@ export function ResultsPanel({ area, canRun, tier }: { area: AreaPublic; canRun:
   const [page, setPage] = useState(1);
   const [running, setRunning] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [downloadingArea, setDownloadingArea] = useState(false);
   const [activeId, setActiveId] = useState<number | null>(null);
 
   const climate = climateByValue(area.climate_type);
@@ -154,6 +155,31 @@ export function ResultsPanel({ area, canRun, tier }: { area: AreaPublic; canRun:
     }
   }
 
+  async function downloadAreaReport() {
+    if (downloadingArea || tierFor(tier) === "free") return;
+    setDownloadingArea(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/areas/${area.id}/report.pdf`);
+      if (!res.ok) {
+        const d = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(d?.error ?? `Area report download failed (HTTP ${res.status}).`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `climascope-area-report-${area.id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Area report download failed.");
+    } finally {
+      setDownloadingArea(false);
+    }
+  }
   async function runAnalysis() {
     if (!canRun || running) return;
     setRunning(true);
@@ -265,6 +291,17 @@ export function ResultsPanel({ area, canRun, tier }: { area: AreaPublic; canRun:
             >
               {downloading && <Spinner />}
               {downloading ? "Preparing…" : "Download PDF report"}
+            </button>
+          )}
+          {canRun && tierFor(tier) !== "free" && (
+            <button
+              type="button"
+              onClick={() => void downloadAreaReport()}
+              disabled={downloadingArea || loading !== null}
+              className="btn-secondary"
+            >
+              {downloadingArea && <Spinner />}
+              {downloadingArea ? "Preparing…" : "Area report (PDF)"}
             </button>
           )}
           {canRun && (

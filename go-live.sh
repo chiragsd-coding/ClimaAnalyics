@@ -3,7 +3,8 @@
 #
 # Contract:
 #   VERCEL_TOKEN   (required) — collected from the owner via the go-live flow.
-#   DATABASE_URL   (optional) — passed as a runtime env var when the site uses a DB.
+#   CTO_ENV_FILE   (optional) — the saved business secrets; each one except VERCEL_*
+#                  becomes a runtime env var of the live site. Default below.
 #   VERCEL_SCOPE   (optional) — team slug; auto-resolved from the token if unset.
 #   VERCEL_TEAM_ID (optional) — team id; auto-resolved from the token if unset.
 #
@@ -42,8 +43,19 @@ bash ./build-vercel.sh
 
 SCOPE_ARGS=()
 if [ -n "${VERCEL_SCOPE:-}" ]; then SCOPE_ARGS=(--scope "$VERCEL_SCOPE"); fi
+# Every saved secret reaches the live site, so any backend the site uses works
+# there too. The values come from the file itself, not from a shell that may
+# predate the last save. VERCEL_* are the deploy's own credentials.
+ENV_FILE="${CTO_ENV_FILE:-/etc/profile.d/cto-env-vars.sh}"
 ENV_ARGS=()
-if [ -n "${DATABASE_URL:-}" ]; then ENV_ARGS=(-e "DATABASE_URL=$DATABASE_URL"); fi
+if [ -r "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  for key in $(sed -nE 's/^export ([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' "$ENV_FILE"); do
+    case "$key" in VERCEL_*) continue ;; esac
+    ENV_ARGS+=(-e "$key=${!key}")
+  done
+fi
 
 echo "==> deploying${VERCEL_SCOPE:+ (scope: $VERCEL_SCOPE)}"
 DEPLOY_OUT="$($VERCEL deploy --prebuilt --yes --token "$VERCEL_TOKEN" \

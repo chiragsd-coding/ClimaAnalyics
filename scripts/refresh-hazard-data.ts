@@ -286,8 +286,17 @@ function parseNetcdf3(buf: Buffer): NcFile {
   return { dims, vars, buf };
 }
 
-const ncDouble = (f: NcFile, v: NcVar, i: number): number => f.buf.readDoubleLE(v.begin + i * 8);
-const ncFloat = (f: NcFile, v: NcVar, i: number): number => f.buf.readFloatLE(v.begin + i * 4);
+// NetCDF-3 stores EVERYTHING big-endian (ints, floats, doubles). LE reads
+// yield byte-swapped denormals — the bug that made the FWI cache unusable.
+const ncDouble = (f: NcFile, v: NcVar, i: number): number => f.buf.readDoubleBE(v.begin + i * 8);
+const ncFloat = (f: NcFile, v: NcVar, i: number): number => f.buf.readFloatBE(v.begin + i * 4);
+// Coordinate vars may be NC_FLOAT (5) or NC_DOUBLE (6) depending on dataset
+// (GFWED MERRA-2 stores lat/lon as doubles; read per the variable's own type).
+const ncNum = (f: NcFile, v: NcVar, i: number): number => {
+  if (v.type === 6) return ncDouble(f, v, i);
+  if (v.type === 5) return ncFloat(f, v, i);
+  throw new Error(`netcdf: coordinate var ${v.name} has unsupported type ${v.type} (want float/double)`);
+};
 
 // ---------------------------------------------------------------------------
 // Pipeline steps
@@ -416,10 +425,19 @@ async function gfwed(): Promise<void> {
     const nLon = nc.dims.find((d) => d.name === "lon")!.size;
     if (nx === 0) {
       nx = nLon; ny = nLat;
-      lon0 = ncDouble(nc, lonVar, 0);
-      lat0 = ncDouble(nc, latVar, 0);
-      dLon = ncDouble(nc, lonVar, 1) - lon0;
-      dLat = ncDouble(nc, latVar, 1) - lat0;
+      lon0 = ncNum(nc, lonVar, 0);
+      lat0 = ncNum(nc, latVar, 0);
+      dLon = ncNum(nc, lonVar, 1) - lon0;
+      dLat = ncNum(nc, latVar, 1) - lat0;
+      // Loud guards: a garbage coordinate read must fail the run, never
+      // silently produce an unusable meta (all cells then sample null).
+      const badLon = !Number.isFinite(lon0) || Math.abs(lon0) > 180 || Math.abs(dLon) < 1e-6 || Math.abs(dLon) > 10;
+      const badLat = !Number.isFinite(lat0) || Math.abs(lat0) > 90 || Math.abs(dLat) < 1e-6 || Math.abs(dLat) > 10;
+      if (badLon || badLat) {
+        throw new Error(
+          `netcdf: implausible grid coords in ${fname} (lon0=${lon0} dLon=${dLon} lat0=${lat0} dLat=${dLat}) — check coordinate var type`
+        );
+      }
     } else if (nx !== nLon || ny !== nLat) throw new Error("netcdf: grid changed between months");
     const g = new Float32Array(nLon * nLat);
     for (let i = 0; i < g.length; i++) g[i] = ncFloat(nc, fwiVar, i);

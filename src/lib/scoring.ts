@@ -18,6 +18,7 @@
 import { readFileSync, existsSync, mkdirSync, copyFileSync, writeFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
+import { createBio5Sampler, createFwiSampler, HAZARD_CACHE_DIR } from "~/lib/hazard-cache";
 import { db, type AreaRow, type AnalysisRow } from "~/lib/db";
 
 // ---------------------------------------------------------------------------
@@ -200,11 +201,19 @@ export function ensureIbtracsTracks(): { ok: boolean; count: number; note?: stri
     return { ok: true, count: existing };
   }
   const candidates = [
+    // Normalized cache produced by `bun scripts/refresh-hazard-data.ts`
+    // (preferred); legacy/scratch locations kept for older deployments.
+    join(process.cwd(), ".data", "hazard-cache", "ibtracs.NA.list.v04r01.csv"),
     layerPath("ibtracs.NA.list.v04r01.csv"),
     "/tmp/layers/ibtracs.NA.list.v04r01.csv",
   ];
   const csv = candidates.find((p) => existsSync(p));
-  if (!csv) return { ok: false, count: 0, note: `IBTrACS CSV not found; expected ${TRACK_CSV_URL}` };
+  if (!csv)
+    return {
+      ok: false,
+      count: 0,
+      note: `IBTrACS CSV not cached — run: bun scripts/refresh-hazard-data.ts --only wind (source ${TRACK_CSV_URL})`,
+    };
   mkdirSync(LAYER_DIR, { recursive: true });
   if (!existsSync(layerPath("ibtracs.NA.list.v04r01.csv"))) {
     try {
@@ -476,6 +485,10 @@ export type StructureLayers = {
   windCell: (lat: number, lon: number) => WindCell | null;
   srtm: (lat: number, lon: number) => { h: number; from: string } | null;
   osm: OsmBaseline | null;
+  /** WorldClim v2.1 BIO5 sampler from the hazard cache; null ⇒ cache absent (fallback). */
+  heat: ((lat: number, lon: number) => { t: number } | null) | null;
+  /** GFWED FWI peak-season sampler from the hazard cache; null ⇒ cache absent (fallback). */
+  fire: ((lat: number, lon: number) => { fwi: number } | null) | null;
 };
 
 function percentOf(n: number, total: number): number {
@@ -543,8 +556,28 @@ export function evaluateStructure(
         break;
       }
       case "EXTREME_HEAT": {
-        // WorldClim v2.1 BIO5 host (geodata.ucar.edu) is unreachable from this
-        // box; NOAA normals not yet wired. extreme-heat.md fallback 3.
+        // Real-data path: WorldClim v2.1 BIO5 from the hazard cache (refreshed
+        // by scripts/refresh-hazard-data.ts). Thresholds per extreme-heat.md
+        // exactly: <32 → 1; 32–35 → 2; 35–38 → 3; 38–41 → 4; ≥41 → 5.
+        const sampled = layers.heat?.(lat, lon) ?? null;
+        if (sampled) {
+          const T = sampled.t;
+          const score = T < 32 ? 1 : T < 35 ? 2 : T < 38 ? 3 : T < 41 ? 4 : 5;
+          out.push({
+            d,
+            score,
+            missing: false,
+            low_confidence: false,
+            coverage_ok: true,
+            dataset: "WorldClim v2.1 BIO5, 10-min grid, 1970–2000 climatology — real cached data",
+            resolution_km: 18.5,
+            attribution: "WorldClim v2.1 (Fick & Hijmans 2017), free access with attribution",
+            note: "climatological warmest-month daily max — not a heat forecast; no urban-heat-island term",
+            raw: T,
+          });
+          break;
+        }
+        // Fallback (unchanged labels): no BIO5 cache/cell.
         out.push({
           d,
           score: 1,
@@ -554,13 +587,37 @@ export function evaluateStructure(
           dataset: "not ingested — WorldClim v2.1 BIO5 (worldclim.org) unreachable from deployment env",
           resolution_km: 1,
           attribution: "WorldClim v2.1 (Fick & Hijmans 2017)",
-          note: "heat dimension scored 1 (no data); revisit when WorldClim is reachable",
+          note: "heat dimension scored 1 (no data); run scripts/refresh-hazard-data.ts to ingest BIO5",
         });
         break;
       }
       case "WILDFIRE": {
-        // FWI climatology (GFWED) and GFED4s burned-area fallback not ingested.
-        // wildfire.md: "If neither layer exists → score = 1, low_confidence = true."
+        // Real-data path: NASA GISS GFWED v2 (MERRA-2) long-term monthly-mean
+        // FWI climatology from the hazard cache. Statistic: per-cell mean of
+        // the top-3 calendar months (wildfire.md's sanctioned monthly-
+        // granularity option — the preferred daily p90 needs ~8k daily files).
+        // NRCan FWI danger classes per wildfire.md exactly.
+        const sampled = layers.fire?.(lat, lon) ?? null;
+        if (sampled) {
+          const F = sampled.fwi;
+          const score = F < 5.2 ? 1 : F < 11.2 ? 2 : F < 21.3 ? 3 : F < 38 ? 4 : 5;
+          out.push({
+            d,
+            score,
+            missing: false,
+            low_confidence: true, // monthly-mean climatology ≠ daily p90 — biased LOW, documented
+            coverage_ok: true,
+            dataset:
+              "NASA GISS GFWED v2 (MERRA-2) long-term monthly-mean FWI 1981–2010, mean of top-3 calendar months — real cached data",
+            resolution_km: 55,
+            attribution:
+              "NASA GISS GFWED (Field et al.) — public domain; FWI classes: Natural Resources Canada (CW-FIS)",
+            note: "peak-season monthly-mean FWI climatology, not daily p90 — understates extreme fire weather",
+            raw: F,
+          });
+          break;
+        }
+        // Fallback (unchanged labels): no FWI cache/cell.
         out.push({
           d,
           score: 1,
@@ -570,7 +627,7 @@ export function evaluateStructure(
           dataset: "not ingested — NASA GISS GFWED FWI climatology / GFED4s",
           resolution_km: 25,
           attribution: "",
-          note: "fire-weather layer not ingested; scored 1 as spec fallback",
+          note: "fire-weather layer not ingested; run scripts/refresh-hazard-data.ts to ingest GFWED FWI; scored 1 as spec fallback",
         });
         break;
       }
@@ -712,9 +769,17 @@ export async function runAnalysisForArea(
         )
     : [];
   const halfSpan = 0.06 + (area.radius_km / 111);
+  // Exact pre-filter: a track farther than (grid-corner distance + 200 km) from
+  // the centre can never move any cell's score (band-2 needs R_min < 200 km),
+  // so drop it before the O(cells × tracks) grid build. Keeps Miami-size
+  // re-runs well inside the scoring-time budget.
+  const reachKm = halfSpan * 111 * Math.SQRT2 + 205;
+  const trackPts = trackRows.filter(
+    (t) => haversineKm(area.center_lat, area.center_lng, t.lat, t.lon) <= reachKm
+  );
   const windGrid =
-    trackRows.length > 0
-      ? buildWindGrid(area.center_lat, area.center_lng, halfSpan, trackRows)
+    trackPts.length > 0
+      ? buildWindGrid(area.center_lat, area.center_lng, halfSpan, trackPts)
       : null;
 
   let osm = loadOsmBaseline(area.id);
@@ -732,6 +797,9 @@ export async function runAnalysisForArea(
     windCell: (lat, lon) => (windGrid ? windGrid(lat, lon) : null),
     srtm: srtmElevation,
     osm,
+    // Real hazard caches (best effort): null ⇒ documented fallback path.
+    heat: createBio5Sampler(),
+    fire: createFwiSampler(),
   };
 
   // -- per-structure scoring ------------------------------------------------
@@ -865,8 +933,12 @@ export async function runAnalysisForArea(
         FLOOD: "100-year event (1% annual chance)",
         STORM_SURGE: "100-year event (1% annual chance)",
         CYCLONE_WIND: "IBTrACS 1980–2023 (NA basin)",
-        EXTREME_HEAT: "not available in this deployment",
-        WILDFIRE: "not available in this deployment",
+        EXTREME_HEAT: layers.heat
+          ? "WorldClim v2.1 BIO5, 1970–2000 climatology"
+          : "not available in this deployment",
+        WILDFIRE: layers.fire
+          ? "GFWED (MERRA-2) FWI climatology 1981–2010"
+          : "not available in this deployment",
         SNOW_LOAD: "not available in this deployment",
         DROUGHT: "not available in this deployment",
         LANDSLIDE: "not available in this deployment",

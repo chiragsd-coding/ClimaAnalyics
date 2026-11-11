@@ -77,6 +77,7 @@ Area-scoped RBAC applies everywhere: no grant → 404 (matching the app-wide con
 bun install
 bun scripts/seed.ts        # seeds admin + demo accounts and the Miami demo area (writes CREDENTIALS.md at /home/team/shared/CREDENTIALS.md)
 bun run dev                # local dev
+bun scripts/refresh-hazard-data.ts   # download+cache real hazard datasets (IBTrACS, WorldClim BIO5, GFWED FWI) into .data/hazard-cache/
 bun scripts/rbac-test.ts   # RBAC unit tests
 bun scripts/scoring-test.ts --demo   # scoring unit tests + Miami demo band check
 bun scripts/report-test.ts # PDF report tests (both reports: content, RBAC, tier gates)

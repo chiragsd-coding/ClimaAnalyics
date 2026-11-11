@@ -6,6 +6,7 @@
  *
  * Exits non-zero on any failed assertion.
  */
+import { join } from "node:path";
 import { db, type AnalysisRow } from "~/lib/db";
 import {
   combine,
@@ -16,8 +17,11 @@ import {
   runAnalysisForArea,
   cacheSrtmTile,
   ensureIbtracsTracks,
+  evaluateStructure,
   type EvaluatedDimension,
+  type StructureLayers,
 } from "~/lib/scoring";
+import { createBio5Sampler, createFwiSampler } from "~/lib/hazard-cache";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown, tol = 1e-6): void {
@@ -153,6 +157,96 @@ console.log("alpine synthetic structure set (weight-table correctness):");
   }
   // applicability sanity: alpine never computes cyclone/heat/drought/surge
   check("alpine applicability set", JSON.stringify(APPLICABILITY.alpine), JSON.stringify(["FLOOD", "WILDFIRE", "SNOW_LOAD", "LANDSLIDE"]));
+}
+
+// -- real hazard cache: fixture-backed evaluator tests -------------------------
+console.log("hazard cache (fixture-backed) — real-data path, fallback path, provenance:");
+{
+  const FIXTURE_DIR = join(process.cwd(), "scripts", "fixtures", "hazard-cache");
+  const heatFix = createBio5Sampler(FIXTURE_DIR);
+  const fireFix = createFwiSampler(FIXTURE_DIR);
+  check("fixture bio5 sampler loads", heatFix !== null, true);
+  check("fixture fwi sampler loads", fireFix !== null, true);
+  const layersFix: StructureLayers = {
+    climate: "tropical",
+    windCell: () => null,
+    srtm: () => null,
+    osm: null,
+    heat: heatFix,
+    fire: fireFix,
+  };
+  const dimFor = (lat: number, lon: number, d: string): EvaluatedDimension => {
+    const e = evaluateStructure(lat, lon, layersFix).find((x) => x.d === d);
+    if (!e) throw new Error(`${d} dimension missing`);
+    return e;
+  };
+  // WorldClim BIO5 bands per extreme-heat.md: <32→1, 32–35→2, 35–38→3, 38–41→4, ≥41→5
+  const heatCases: [string, number, number][] = [
+    ["T=30 → 1", 1.5, -90],
+    ["T=29 → 1", -1.5, -90],
+    ["T=33 → 2", 1.5, -89],
+    ["T=34 → 2", -2, -89],
+    ["T=36 → 3", 1.5, -88],
+    ["T=39 → 4", 1.5, -87],
+    ["T=42 → 5", 1.5, -86],
+  ];
+  for (const [name, lat, lon] of heatCases) check(`heat ${name}`, dimFor(lat, lon, "EXTREME_HEAT").score, Number(name.split("→ ")[1]));
+  // longitude wrap: 271°E ≡ −89° → T=33 → 2
+  check("heat longitude wrap 271°E ≡ −89°", dimFor(1.5, 271, "EXTREME_HEAT").score, 2);
+  // ocean cell with a valid cell within 0.5° → spec fallback 1 (nearest valid cell)
+  const heatNear = dimFor(0, -87, "EXTREME_HEAT");
+  check("heat ocean cell → nearest valid within 0.5° (T=41 → 5, spec: T ≥ 41)", heatNear.score, 5);
+  check("heat real-path provenance", dimFor(1.5, -90, "EXTREME_HEAT").dataset?.startsWith("WorldClim v2.1 BIO5"), true);
+  check("heat real-path flags low_confidence=false", dimFor(1.5, -90, "EXTREME_HEAT").low_confidence, false);
+  check("heat real-path coverage_ok=true", dimFor(1.5, -90, "EXTREME_HEAT").coverage_ok, true);
+  // isolated ocean band (no valid cell within 0.5°) → honest fallback 3 (score 1, low_confidence)
+  const heatNone = dimFor(-0.5, -90, "EXTREME_HEAT");
+  check("heat no-cell fallback score", heatNone.score, 1);
+  check("heat no-cell fallback label unchanged", heatNone.dataset, "not ingested — WorldClim v2.1 BIO5 (worldclim.org) unreachable from deployment env");
+  check("heat no-cell fallback low_confidence", heatNone.low_confidence, true);
+  // GFWED FWI bands per wildfire.md/NRCan: <5.2→1, 5.2–11.2→2, 11.2–21.3→3, 21.3–38→4, ≥38→5
+  const fireCases: [string, number, number][] = [
+    ["FWI=3 → 1", 1.5, -90],
+    ["FWI=8 → 2", 1.5, -89],
+    ["FWI=15 → 3", 1.5, -88],
+    ["FWI=25 → 4", 0.5, -88],
+    ["FWI=45 → 5", 1.5, -87],
+    ["FWI=0.5 → 1", 1.5, -86],
+    ["FWI=11.5 → 3", 0.5, -85],
+  ];
+  for (const [name, lat, lon] of fireCases) check(`fire ${name}`, dimFor(lat, lon, "WILDFIRE").score, Number(name.split("→ ")[1]));
+  const fireReal = dimFor(1.5, -90, "WILDFIRE");
+  check("fire real-path provenance", fireReal.dataset?.startsWith("NASA GISS GFWED v2 (MERRA-2)"), true);
+  check("fire real-path flagged low_confidence (monthly-mean ≠ daily p90)", fireReal.low_confidence, true);
+  check("fire real-path coverage_ok", fireReal.coverage_ok, true);
+  const fireNone = dimFor(-0.5, -90, "WILDFIRE");
+  check("fire no-cell fallback score", fireNone.score, 1);
+  check("fire no-cell fallback label unchanged", fireNone.dataset, "not ingested — NASA GISS GFWED FWI climatology / GFED4s");
+  // fallback path activates when the cache is absent (empty dir ⇒ sampler null)
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join: joinOs } = await import("node:path");
+  const emptyDir = mkdtempSync(joinOs(tmpdir(), "hazard-cache-empty-"));
+  check("sampler returns null on empty cache dir", createBio5Sampler(emptyDir) === null, true);
+  check("fwi sampler returns null on empty cache dir", createFwiSampler(emptyDir) === null, true);
+  const layersNone: StructureLayers = { climate: "tropical", windCell: () => null, srtm: () => null, osm: null, heat: null, fire: null };
+  const dimsNone = evaluateStructure(25.77, -80.19, layersNone);
+  check("fallback heat label (cache absent)", dimsNone.find((x) => x.d === "EXTREME_HEAT")!.dataset, "not ingested — WorldClim v2.1 BIO5 (worldclim.org) unreachable from deployment env");
+  check("fallback fire label (cache absent)", dimsNone.find((x) => x.d === "WILDFIRE")!.dataset, "not ingested — NASA GISS GFWED FWI climatology / GFED4s");
+  // provenance shape stored per score row (same construction as runAnalysisForArea)
+  const dimsFix = evaluateStructure(1.5, -90, layersFix);
+  const sourcesHazards: Record<string, unknown> = {};
+  for (const e of dimsFix) {
+    sourcesHazards[e.d] = { dataset: e.dataset, status: e.missing ? "not_assessed" : "scored" };
+  }
+  const sources = { climate_type: "tropical", hazards: sourcesHazards };
+  check("sources JSON records real heat source", JSON.stringify(sources).includes("WorldClim v2.1 BIO5"), true);
+  check("sources JSON records real fire source", JSON.stringify(sources).includes("NASA GISS GFWED"), true);
+  // combination with real-data dims stays 1..5 and honest status
+  const combined = combine("tropical", dimsFix);
+  check("combine with real dims: R in 1..5", Number.isInteger(combined.R) && combined.R >= 1 && combined.R <= 5, true);
+  check("combine with real dims: status scored", combined.status, "scored");
+  check("combine with real dims: dominant set", typeof combined.dominant, "string");
 }
 
 // -- demo area run ------------------------------------------------------------

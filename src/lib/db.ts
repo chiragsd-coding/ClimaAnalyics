@@ -204,6 +204,30 @@ function migrate(db: Database) {
     `);
     db.exec(`PRAGMA user_version = 5;`);
   }
+  // v6 — third billing provider (PayPal). billing_events.provider carried a
+  // CHECK constraint listing only stripe/razorpay; SQLite cannot alter a CHECK
+  // in place, so the table is rebuilt (same columns/rows, widened constraint).
+  if (version < 6) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS billing_events_v6 (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider     TEXT NOT NULL CHECK (provider IN ('stripe','razorpay','paypal')),
+        event_id     TEXT NOT NULL,
+        event_type   TEXT NOT NULL DEFAULT '',
+        user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        payload      TEXT,
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        UNIQUE (provider, event_id)
+      );
+    `);
+    db.exec(`
+      INSERT OR IGNORE INTO billing_events_v6 (id, provider, event_id, event_type, user_id, payload, created_at)
+      SELECT id, provider, event_id, event_type, user_id, payload, created_at FROM billing_events;
+    `);
+    db.exec(`DROP TABLE billing_events;`);
+    db.exec(`ALTER TABLE billing_events_v6 RENAME TO billing_events;`);
+    db.exec(`PRAGMA user_version = 6;`);
+  }
 }
 
 export type UserRow = {

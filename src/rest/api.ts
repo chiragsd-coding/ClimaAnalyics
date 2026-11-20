@@ -46,6 +46,7 @@ import {
 } from "~/lib/plans";
 import {
   BillingProviderError,
+  billingStatus,
   handleBillingWebhook,
   resolveBillingProvider,
 } from "~/lib/billing";
@@ -695,6 +696,14 @@ const listUsers = route("GET", "/api/users", ({ user }) => {
 });
 
 // -- billing (env-selected provider; see src/lib/billing) ----------------------
+// Billing status surface: which provider is selected (stripe | razorpay |
+// paypal), whether it is fully configured, and the exact env var names it still
+// needs. Env var NAMES only — no credential value is ever returned.
+const billingStatusGet = route("GET", "/api/billing/status", ({ user }) => {
+  requireUser(user);
+  return json(billingStatus());
+});
+
 // Checkout requires a signed-in user. With no real provider credentials the
 // endpoint stays honest: no checkout URL is fabricated and PLANS.billingNote
 // is returned verbatim. A tier can only become pro through a signature-
@@ -703,8 +712,16 @@ const billingCheckout = route("POST", "/api/billing/checkout", async ({ user, re
   const u = requireUser(user);
   const resolved = resolveBillingProvider();
   if (!resolved.provider) {
-    // Honest no-creds state — identical to the copy shown in the Plans panel.
-    return json({ billingEnabled: false, provider: null, billingNote: PLANS.billingNote });
+    // Honest no-creds state — identical to the copy shown in the Plans panel,
+    // plus which provider is selected and what it is still missing.
+    const status = billingStatus();
+    return json({
+      billingEnabled: false,
+      provider: null,
+      billingNote: PLANS.billingNote,
+      selectedProvider: status.selectedProvider,
+      missingEnvVars: status.missingEnvVars,
+    });
   }
   const origin = new URL(req.url).origin;
   try {
@@ -720,17 +737,29 @@ const billingCheckout = route("POST", "/api/billing/checkout", async ({ user, re
 });
 
 // Webhook receivers are provider-to-server: no session auth (they arrive
-// unauthenticated by design) — the signature over the raw body is the proof.
-// Verified `checkout.session.completed` (Stripe) / `payment_link.paid`
-// (Razorpay) events are the ONLY path that flips a user to Pro.
-const billingWebhook = route("POST", "/api/billing/webhook/:provider", ({ params, req, rawBody }) => {
+// unauthenticated by design) — the provider's proof over the raw body is the
+// only authentication. Stripe (checkout.session.completed) and Razorpay
+// (payment_link.paid) verify an HMAC header; PayPal verifies the transmission
+// headers through its verify-webhook-signature API. Verified upgrade events
+// (and PayPal cancellation/suspension for the downgrade) are the ONLY path
+// that changes a user's tier.
+const billingWebhook = route("POST", "/api/billing/webhook/:provider", async ({ params, req, rawBody }) => {
+  const provider = params.provider;
+  // PayPal is verified from the full transmission header set, not one header.
   const signature =
-    req.headers.get("stripe-signature") ??
-    req.headers.get("x-razorpay-signature") ??
-    req.headers.get("razorpay-signature");
-  const result = handleBillingWebhook(params.provider, rawBody, signature);
+    provider === "paypal"
+      ? null
+      : (req.headers.get("stripe-signature") ??
+        req.headers.get("x-razorpay-signature") ??
+        req.headers.get("razorpay-signature"));
+  const result = await handleBillingWebhook(provider, rawBody, signature, req.headers);
   if (!result.ok) throw new HttpError(400, result.reason);
-  return json({ received: true, handled: result.handled, ...(result.userId ? { userId: result.userId } : {}) });
+  return json({
+    received: true,
+    handled: result.handled,
+    ...(result.action ? { action: result.action } : {}),
+    ...(result.userId ? { userId: result.userId } : {}),
+  });
 });
 
 // -- dispatch -------------------------------------------------------------------
@@ -759,6 +788,7 @@ const ROUTES: Route[] = [
   listStructures,
   listUsers,
   createLeadRequest,
+  billingStatusGet,
   billingCheckout,
   billingWebhook,
 ];

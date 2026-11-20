@@ -76,7 +76,7 @@ export function createRazorpayProvider(config: {
       return { provider: "razorpay", url: json.short_url };
     },
 
-    verifyWebhook(rawBody: string, signature: string | null): WebhookVerification {
+    async verifyWebhook(rawBody: string, signature: string | null): Promise<WebhookVerification> {
       if (!config.webhookSecret) {
         return { ok: false, reason: "RAZORPAY_WEBHOOK_SECRET is not configured." };
       }

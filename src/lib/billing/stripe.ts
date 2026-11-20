@@ -81,7 +81,7 @@ export function createStripeProvider(config: {
       return { provider: "stripe", url: json.url };
     },
 
-    verifyWebhook(rawBody: string, signature: string | null): WebhookVerification {
+    async verifyWebhook(rawBody: string, signature: string | null): Promise<WebhookVerification> {
       if (!config.webhookSecret) {
         return { ok: false, reason: "STRIPE_WEBHOOK_SECRET is not configured." };
       }

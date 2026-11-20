@@ -14,7 +14,7 @@ Define an area (click the map or enter coordinates + radius, 0.5–10 km), pick 
 | 4 | Results UI — risk-colored map overlay, sortable table, distribution chart, KPI cards, saved results, provenance/sources disclosure | ✅ Done (verified in-browser on the live site) |
 | 5 | PDF area report (risk profile + top-risk structures, per-analysis) | ✅ Done (verified live: PDF endpoint, RBAC 401/403/404, all report tests green) |
 | 6 | Subscription tiers (Free demo-only / Pro $99-mo / Enterprise custom), paywall, plan badge, upsell panels, Enterprise lead capture | ✅ Done (tiers live, gates in-app; real payments pending provider credentials) |
-| 7 | Billing gateway — env-selected provider (Stripe or Razorpay), checkout + signature-verified webhooks | ✅ Done (provider-selection contract proven by env-switch test; runs honestly disabled until real credentials land) |
+| 7 | Billing gateway — env-selected provider (Stripe, Razorpay or PayPal), checkout + verified webhooks, billing status | ✅ Done (provider-selection contract proven by env-switch test; runs honestly disabled until real credentials land) |
 | 8 | Per-area rooftop-level PDF report — every building drawn individually in its risk-band color | ✅ Done (verified live: Pro → 312 KB 5-page A4 PDF for the Miami demo; Free → 403 with Pro upsell) |
 
 ## Scoring
@@ -31,7 +31,7 @@ The payment gateway is **selected in the env file** — no code changes to switc
 
 ```bash
 # .env (gitignored; .env.example documents the names with DUMMY placeholders)
-BILLING_PROVIDER=stripe        # "stripe" or "razorpay"; unset = billing disabled
+BILLING_PROVIDER=stripe        # "stripe", "razorpay" or "paypal"; unset = billing disabled
 
 # Stripe (required when BILLING_PROVIDER=stripe)
 STRIPE_SECRET_KEY=…            # secret API key
@@ -43,9 +43,19 @@ RAZORPAY_KEY_ID=…
 RAZORPAY_KEY_SECRET=…
 RAZORPAY_WEBHOOK_SECRET=…      # for POST /api/billing/webhook/razorpay
 RAZORPAY_CURRENCY=INR          # optional, default INR
+
+# PayPal (required when BILLING_PROVIDER=paypal)
+PAYPAL_CLIENT_ID=…             # REST app client id
+PAYPAL_CLIENT_SECRET=…         # REST app client secret
+PAYPAL_WEBHOOK_ID=…            # webhook id for POST /api/billing/webhook/paypal
+PAYPAL_PLAN_ID=…               # recurring subscription plan for Pro ($99/month)
+PAYPAL_API_BASE=…              # optional, default https://api-m.paypal.com (sandbox: api-m.sandbox.paypal.com)
 ```
 
 - **Only the selected provider's values are passed to the code** (per-request resolution). Flipping `BILLING_PROVIDER` switches gateways; the other provider's variables are never read. This contract is proven by the env-switch test in `scripts/billing-test.ts` (section s) and the h2 guard tests.
+- **Each provider speaks its own documented REST API** (plain fetch, no SDKs): Stripe `POST /v1/checkout/sessions` → hosted URL; Razorpay `POST /v1/payment_links` → `short_url`; PayPal OAuth2 token → `POST /v1/billing/subscriptions` → `approve` link. Request shapes are asserted against a stubbed fetch in `scripts/billing-test.ts` section r.
+- **Webhook verification per provider**: Stripe (`t/v1` HMAC over the raw body, 5-minute replay window), Razorpay (raw-body HMAC-SHA256), PayPal (the five `paypal-transmission-*` headers + `PAYPAL_WEBHOOK_ID` checked through PayPal's `/v1/notifications/verify-webhook-signature` API — `verification_status: SUCCESS` is the only accepted answer, and an unreachable verifier fails closed). Verified upgrades: Stripe `checkout.session.completed`, Razorpay `payment_link.paid`, PayPal `BILLING.SUBSCRIPTION.ACTIVATED` / `PAYMENT.SALE.COMPLETED` (renewals are matched by recorded subscription id). PayPal `BILLING.SUBSCRIPTION.CANCELLED` / `SUSPENDED` downgrades the user back to Free. Every applied event is stored in `billing_events` for idempotency.
+- **Billing status surface**: `GET /api/billing/status` (signed-in) returns `billingEnabled`, the selected and the fully configured provider, the exact missing/placeholder env var **names**, the pinned billing note and the provider's webhook path — so connecting a gateway is a matter of filling in those variables.
 - **Honest disabled state**: a value is "configured" only when non-empty and not a `DUMMY_` placeholder. With placeholders (the committed default), checkout returns the standard "billing is being connected" note — no fabricated checkout URLs — and **no tier can ever upgrade**: a tier becomes `pro` ONLY via a signature-verified provider webhook while the provider is fully configured. Even an event signed with the placeholder webhook secret is rejected (guard enforced in `src/lib/billing/index.ts`, tested in section h2).
 - **Adding other providers**: implement the `BillingProvider` interface (`createCheckoutSession`, `verifyWebhook`) in one new file under `src/lib/billing/`, register it in the resolver, and add its env var names to `BILLING_ENV_VARS` + `.env.example`. Everything else (checkout endpoint, webhook routing, tier gating, tests) is provider-agnostic.
 - Pro price is a single config value: `PRO_PRICE_MONTHLY` in `src/lib/plans.ts`.
@@ -59,8 +69,9 @@ RAZORPAY_CURRENCY=INR          # optional, default INR
 | `POST /api/areas/:id/analyses`, `GET …/analyses/:id/scores · sources` | run + fetch scoring results |
 | `GET /api/areas/:id/analyses/:aid/report.pdf` | per-analysis PDF report |
 | `GET /api/areas/:id/report.pdf` | per-area rooftop PDF report (latest completed analysis) |
+| `GET /api/billing/status` | selected provider, exact missing env var names, webhook path (honest config surface) |
 | `POST /api/billing/checkout` | provider-hosted checkout for Pro (honest no-creds state without credentials) |
-| `POST /api/billing/webhook/stripe · razorpay` | signature-verified payment events — the only tier-upgrade path |
+| `POST /api/billing/webhook/stripe · razorpay · paypal` | verified payment events — the only path that changes a tier (upgrade, and PayPal cancellation downgrade) |
 
 Area-scoped RBAC applies everywhere: no grant → 404 (matching the app-wide convention), viewer role → 403, free tier on gated downloads → 403 with Pro upsell copy.
 
@@ -81,7 +92,7 @@ bun scripts/refresh-hazard-data.ts   # download+cache real hazard datasets (IBTr
 bun scripts/rbac-test.ts   # RBAC unit tests
 bun scripts/scoring-test.ts --demo   # scoring unit tests + Miami demo band check
 bun scripts/report-test.ts # PDF report tests (both reports: content, RBAC, tier gates)
-bun scripts/billing-test.ts          # billing gateway tests (selection, honest state, signatures, h2 guard)
+bun scripts/billing-test.ts          # billing gateway tests (3-way selection, per-provider REST shapes, webhook verification, status surface, placeholder guard, tier changes)
 bun scripts/plans-test.ts  # pricing/tier gate tests
 bun run publish            # build + serve on :3000 (live deploy)
 ```
@@ -98,7 +109,7 @@ src/lib/rbac.ts        # area-scoped access control
 src/lib/plans.ts       # tiers + pricing config (PRO_PRICE_MONTHLY, billingNote)
 src/lib/report.ts      # per-analysis PDF builder (band colors, disclaimer)
 src/lib/area-report.ts # per-area rooftop PDF builder (footprint visualization page)
-src/lib/billing/       # env-selected payment gateway (index + stripe.ts + razorpay.ts)
+src/lib/billing/       # env-selected payment gateway (index + stripe.ts + razorpay.ts + paypal.ts)
 src/rest/api.ts        # REST endpoints (areas, structures, analyses, scores, reports, billing)
 src/components/        # ResultsPanel (downloads + upsell), Plans, AreaMap, Dashboard
 src/routes/            # TanStack Start routes (dashboard, area detail, auth)
